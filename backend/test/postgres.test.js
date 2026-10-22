@@ -3,18 +3,16 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { PostgresOfferStore } from '../src/repositories/offers.js';
-
 import { PostgresContentStore } from '../src/repositories/videos.js';
+import { applyMigrations } from '../src/database/migrate.js';
 
-async function withSchema(run) {
+async function withSchema(run, { initializeMigrations = true } = {}) {
   const schema = 'cp_test_' + randomUUID().replaceAll('-', '');
   const admin = new pgModule.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new pgModule.Pool({ connectionString: process.env.TEST_DATABASE_URL, options: `-c search_path=${schema}` });
   try {
-    for (const migration of ['001_offers.sql', '002_videos.sql']) {
-      await pool.query(await readFile(new URL(`../src/database/migrations/${migration}`, import.meta.url), 'utf8'));
-    }
+    if (initializeMigrations) await applyMigrations(pool);
     await run(pool, schema);
   } finally {
     await pool.end();
@@ -29,6 +27,7 @@ test('PostgreSQL transactions, idempotency, outbox retry and acknowledgement', a
   const { default: pg } = await import('pg');
   pgModule = pg;
   await withSchema(async pool => {
+    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 2 });
     const store = new PostgresOfferStore(pool);
     const offer = { id: 'offer_test', creator_pubkey: 'a'.repeat(64), terms: {}, status: 'draft', event_id: null, created_at: 1000 };
     const work = async tx => { await tx.insertOffer(offer); return { status: 201, body: offer }; };
@@ -51,6 +50,25 @@ test('PostgreSQL transactions, idempotency, outbox retry and acknowledgement', a
     const restarted = new PostgresOfferStore(pool);
     assert.equal((await restarted.getOffer(offer.id)).status, 'published');
   });
+});
+
+test('migration runner upgrades an existing schema, preserves rows, and rejects edited migrations', async t => {
+  if (!process.env.TEST_DATABASE_URL) { t.skip('Set TEST_DATABASE_URL to a disposable PostgreSQL database'); return; }
+  if (!pgModule) { const { default: pg } = await import('pg'); pgModule = pg; }
+  await withSchema(async pool => {
+    for (const migration of ['001_offers.sql', '002_videos.sql']) {
+      await pool.query(await readFile(new URL(`../src/database/migrations/${migration}`, import.meta.url), 'utf8'));
+    }
+    await pool.query('INSERT INTO offers(id, document) VALUES ($1, $2)', ['existing_offer', { status: 'published' }]);
+
+    assert.deepEqual(await applyMigrations(pool), { applied: 2, skipped: 0 });
+    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 2 });
+    assert.deepEqual((await pool.query('SELECT document FROM offers WHERE id = $1', ['existing_offer'])).rows[0].document,
+      { status: 'published' });
+
+    await pool.query("UPDATE backend_schema_migrations SET checksum = repeat('0', 64) WHERE name = '001_offers.sql'");
+    await assert.rejects(applyMigrations(pool), /changed after it was recorded/);
+  }, { initializeMigrations: false });
 });
 
 test('content layer persists ownership in the database and filters discovery by offer state', async t => {
