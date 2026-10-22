@@ -6,25 +6,16 @@ import { createOfferController } from './controllers/offers.js';
 import { createContentController } from './controllers/content.js';
 import { HttpError } from './utils/errors.js';
 
-export function createApp({ service, contentService = null, verifyEvent, origin, corsOrigin = null, now = () => Math.floor(Date.now() / 1000), onError = console.error }) {
+export function createApp({ service, contentService = null, verifyEvent, origin, corsOrigins = [], readinessCheck, now = () => Math.floor(Date.now() / 1000), onError = console.error }) {
   const controller = createOfferController(service);
   const contentController = createContentController(contentService || new Proxy({}, { get: () => () => {
     throw new HttpError(501, 'CONTENT_NOT_CONFIGURED', 'The content layer is not available.');
   } }));
-  const isAllowedOrigin = value => {
-    if (!value) return false;
-    try {
-      const url = new URL(value);
-      return url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-    } catch {
-      return false;
-    }
-  };
   return createServer({ requestTimeout: 15000, headersTimeout: 10000, maxHeaderSize: 16384 }, async (request, response) => {
     const requestOrigin = request.headers.origin;
-    if (requestOrigin && isAllowedOrigin(requestOrigin)) {
+    if (requestOrigin) response.setHeader('Vary', 'Origin');
+    if (requestOrigin && corsOrigins.includes(requestOrigin)) {
       response.setHeader('Access-Control-Allow-Origin', requestOrigin);
-      response.setHeader('Vary', 'Origin');
       response.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
       response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Idempotency-Key');
       response.setHeader('Access-Control-Max-Age', '600');
@@ -41,6 +32,29 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
     try {
       if (!request.url.startsWith('/') || request.url.startsWith('//')) throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid request URL.');
       const url = new URL(request.url, origin);
+      if (url.pathname === '/health/live' || url.pathname === '/health/ready') {
+        if (request.method !== 'GET') throw new HttpError(404, 'NOT_FOUND', 'Endpoint not found.');
+        if (url.pathname === '/health/live') {
+          response.writeHead(200);
+          response.end(JSON.stringify({ status: 'alive' }));
+          return;
+        }
+        // Readiness is separate from liveness so a dependency outage does not restart the process.
+        let ready = false;
+        try {
+          ready = typeof readinessCheck === 'function' && await readinessCheck();
+        } catch (error) {
+          onError(error);
+        }
+        if (!ready) {
+          response.writeHead(503);
+          response.end(JSON.stringify({ status: 'not_ready', error: 'Required dependencies are unavailable.' }));
+          return;
+        }
+        response.writeHead(200);
+        response.end(JSON.stringify({ status: 'ready' }));
+        return;
+      }
       const route = matchWebhookRoute(request.method, url.pathname) || matchOfferRoute(request.method, url.pathname)
         || matchVideoRoute(request.method, url.pathname);
       if (!route) throw new HttpError(404, 'NOT_FOUND', 'Endpoint not found.');

@@ -60,6 +60,21 @@ function readCloudinary(env) {
   return { cloudName, apiKey, apiSecret, folder };
 }
 
+function readCorsOrigins(env) {
+  // Support multiple browser frontends while preserving the older singular name.
+  const values = env.CORS_ORIGINS ?? env.CORS_ORIGIN ?? '';
+  return [...new Set(values.split(',').map(value => value.trim()).filter(Boolean).map(value => {
+    let url;
+    try { url = new URL(value); } catch { throw new Error('CORS_ORIGINS must contain valid origins'); }
+    const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if ((!['https:', 'http:'].includes(url.protocol)) || (url.protocol !== 'https:' && !local)
+      || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+      throw new Error('CORS_ORIGINS must contain HTTPS origins (HTTP is allowed only for localhost development)');
+    }
+    return url.origin;
+  }))];
+}
+
 export function readConfig(env = process.env) {
   const port = Number(env.PORT || 3000);
   const kind = Number(env.NOSTR_OFFER_KIND);
@@ -77,8 +92,10 @@ export function readConfig(env = process.env) {
     const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     if ((url.protocol !== 'wss:' && !(local && url.protocol === 'ws:')) || url.username || url.password || url.hash) throw new Error('Relays must use wss://, or ws:// on localhost');
   }
-  const corsOrigin = env.CORS_ORIGIN ? new URL(env.CORS_ORIGIN).origin : null;
-  return { host: env.HOST || '127.0.0.1', port, origin: origin.origin, corsOrigin, databaseUrl: env.DATABASE_URL,
+  // Cloud Run sets K_SERVICE; local development keeps the safer loopback default.
+  const host = env.HOST || (env.K_SERVICE ? '0.0.0.0' : '127.0.0.1');
+  const corsOrigins = readCorsOrigins(env);
+  return { host, port, origin: origin.origin, corsOrigins, databaseUrl: env.DATABASE_URL,
     kind, attestorPubkey, attestorSecretKey, relays, lndRestUrl: readLndUrl(env.LND_REST_URL), lndMacaroon: env.LND_MACAROON?.trim() || null,
     cloudinary: readCloudinary(env) };
 }

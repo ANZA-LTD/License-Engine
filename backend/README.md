@@ -15,7 +15,40 @@ npm test
 npm run contracts
 ```
 
-The offer API, publication worker and payment integration are implemented. Dependency installation remains pending; see the Day 2 guide for the exact setup requirements.
+The offer API, publication worker and payment integration are implemented. See the runtime notes below and the Day 2 guide for database setup.
+
+## Runtime and container
+
+The server loads `backend/.env` for local development when that file exists. The file is optional: environment variables supplied by a hosting platform work without it, and already-set platform variables take precedence. Do not commit `.env` or place secrets in the container image.
+
+Required runtime settings include `DATABASE_URL`, `NOSTR_OFFER_KIND`,
+`NOSTR_ATTESTOR_PUBKEY`, and `NOSTR_RELAYS`. Optional settings include `PORT`
+(defaults to `3000`), `HOST` (defaults to `127.0.0.1` locally and `0.0.0.0`
+when Cloud Run sets `K_SERVICE`), `PUBLIC_ORIGIN`, and `CORS_ORIGINS`.
+`CORS_ORIGINS` is a comma-separated list of exact HTTPS origins; HTTP is
+permitted only for localhost development. The older singular `CORS_ORIGIN`
+setting remains supported. The server does not enable browser CORS access when
+no origin is configured.
+
+`GET /health/live` only reports whether the process can answer requests.
+`GET /health/ready` additionally checks database connectivity and the tables
+required by the current API schema. A temporary database failure makes
+readiness return `503` without making liveness fail.
+
+Build and run the backend container from this directory:
+
+```powershell
+docker build -t anza-licensing-backend .
+docker run --rm -p 8080:8080 --env-file .env -e PORT=8080 anza-licensing-backend
+```
+
+For local Docker runs, pass the existing local `.env` file at runtime (it is
+excluded from the image); if you do not have one, supply the required settings
+through your shell instead. Supply production secrets through a secret manager. Cloud Run
+sets `PORT` and `K_SERVICE`; the server binds to all interfaces there. The
+publication outbox worker still runs inside the API process. Review its
+multi-instance/idle behavior before deploying; this phase does not change its
+execution model or deploy a service.
 
 PostgreSQL integration tests run when `TEST_DATABASE_URL` is set:
 
