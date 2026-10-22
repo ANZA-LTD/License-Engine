@@ -1,0 +1,465 @@
+{
+  "info": {
+    "name": "ContentPort API",
+    "description": "Generated from the repository OpenAPI contract. Replace placeholder variables before sending requests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Check that the process responds",
+          "description": "",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/live",
+              "variable": []
+            }
+          }
+        },
+        {
+          "name": "Check required database tables and connectivity",
+          "description": "",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/ready",
+              "variable": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Offers",
+      "item": [
+        {
+          "name": "List published offers for brand discovery",
+          "description": "",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/offers",
+              "variable": []
+            }
+          }
+        },
+        {
+          "name": "Create a creator-owned draft offer",
+          "description": "Requires creator Nostr HTTP authorization. Without video_id, provide content_url and content_sha256. With video_id, the video must be owned and ready; the server resolves the canonical media reference and ignores client-supplied content_url or content_sha256.",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}",
+                "type": "text",
+                "disabled": false
+              },
+              {
+                "key": "Authorization",
+                "value": "Nostr {{signedNip98Event}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"brand\": \"Example Brand\",\n  \"content_url\": \"https://example.com/watermarked-preview.mp4\",\n  \"content_sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"amount_sats\": 25000,\n  \"usage_rights\": \"Non-exclusive organic social use; no paid advertising.\",\n  \"duration\": {\n    \"type\": \"fixed\",\n    \"days\": 30\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/offers",
+              "variable": []
+            }
+          }
+        },
+        {
+          "name": "Read an offer; private drafts require creator authorization",
+          "description": "",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/offers/:id",
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{offerId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Validate and queue the exact creator-signed offer",
+          "description": "",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}",
+                "type": "text",
+                "disabled": false
+              },
+              {
+                "key": "Authorization",
+                "value": "Nostr {{signedNip98Event}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n  \"pubkey\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"created_at\": 1700000000,\n  \"kind\": 9998,\n  \"tags\": [\n    [\n      \"t\",\n      \"contentport-offer-v1\"\n    ]\n  ],\n  \"content\": \"{\\\"schema\\\":\\\"contentport.offer.v1\\\",\\\"terms\\\":{}}\",\n  \"sig\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/offers/:id/publish",
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{offerId}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Development payment",
+      "item": [
+        {
+          "name": "Request a local LND invoice for a published offer",
+          "description": "Development-only legacy route. It uses the single configured local LND node and does not route to a creator Lightning Address or independently prove creator-beneficiary settlement. Do not use as the production payment path.",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}",
+                "type": "text",
+                "disabled": false
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/offers/:id/payment",
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{offerId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Read current offer and local LND payment status",
+          "description": "Public legacy status endpoint. A client-visible status is not independent proof of funds movement.",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/offers/:id/status",
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{offerId}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "Legacy Speed webhook alias (unavailable until secret configuration is implemented)",
+          "description": "The route validates Speed HMAC headers, but the current runtime does not load a webhook secret; callbacks cannot authenticate and must not be treated as settlement evidence.",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "webhook-id",
+                "value": "{{webhookId}}",
+                "type": "text",
+                "disabled": false
+              },
+              {
+                "key": "webhook-timestamp",
+                "value": "{{webhookTimestamp}}",
+                "type": "text",
+                "disabled": false
+              },
+              {
+                "key": "webhook-signature",
+                "value": "{{webhookSignature}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/webhooks/lightning",
+              "variable": []
+            }
+          }
+        },
+        {
+          "name": "Legacy Speed webhook (unavailable until secret configuration is implemented)",
+          "description": "Alias of POST /api/webhooks/lightning. The current runtime does not load a webhook secret, so callbacks cannot authenticate.",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "webhook-id",
+                "value": "{{webhookId}}",
+                "type": "text",
+                "disabled": false
+              },
+              {
+                "key": "webhook-timestamp",
+                "value": "{{webhookTimestamp}}",
+                "type": "text",
+                "disabled": false
+              },
+              {
+                "key": "webhook-signature",
+                "value": "{{webhookSignature}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/webhooks/speed/lightning",
+              "variable": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Creator videos",
+      "item": [
+        {
+          "name": "List the authenticated creator’s videos and offer relationships",
+          "description": "",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Nostr {{signedNip98Event}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/videos",
+              "variable": []
+            }
+          }
+        },
+        {
+          "name": "Register a Cloudinary upload",
+          "description": "Ownership comes from the authenticated Nostr public key. The upload must use a valid server-issued upload session.",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}",
+                "type": "text",
+                "disabled": false
+              },
+              {
+                "key": "Authorization",
+                "value": "Nostr {{signedNip98Event}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Example video\",\n  \"upload_session_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"public_id\": \"contentport/videos/example\",\n  \"asset_version\": 1,\n  \"resource_type\": \"video\",\n  \"format\": \"mp4\",\n  \"context\": \"contentport_session=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"status\": \"ready\",\n  \"original_sha256\": null,\n  \"bytes\": 4096,\n  \"duration_seconds\": 30,\n  \"width\": 1920,\n  \"height\": 1080\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/videos",
+              "variable": []
+            }
+          }
+        },
+        {
+          "name": "Sign Cloudinary parameters for one direct browser upload",
+          "description": "",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}",
+                "type": "text",
+                "disabled": false
+              },
+              {
+                "key": "Authorization",
+                "value": "Nostr {{signedNip98Event}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/videos/upload-authorization",
+              "variable": []
+            }
+          }
+        },
+        {
+          "name": "Read one video owned by the authenticated creator",
+          "description": "",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Nostr {{signedNip98Event}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/videos/:id",
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{videoId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete an owned video that no offer references",
+          "description": "",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Nostr {{signedNip98Event}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/videos/:id",
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{videoId}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "offerId",
+      "value": "replace-with-offer-id",
+      "type": "string"
+    },
+    {
+      "key": "videoId",
+      "value": "replace-with-video-id",
+      "type": "string"
+    },
+    {
+      "key": "idempotencyKey",
+      "value": "replace-with-a-unique-random-key",
+      "type": "string"
+    },
+    {
+      "key": "signedNip98Event",
+      "value": "replace-with-base64-signed-event",
+      "type": "string"
+    },
+    {
+      "key": "webhookId",
+      "value": "replace-with-provider-message-id",
+      "type": "string"
+    },
+    {
+      "key": "webhookTimestamp",
+      "value": "replace-with-provider-timestamp",
+      "type": "string"
+    },
+    {
+      "key": "webhookSignature",
+      "value": "replace-with-provider-signature",
+      "type": "string"
+    }
+  ]
+}

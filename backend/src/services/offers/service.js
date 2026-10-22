@@ -63,6 +63,7 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
           if (url.protocol !== 'https:' || url.username || url.password) throw new Error();
         } catch { throw new HttpError(400, 'VALIDATION_ERROR', 'Content URL must be a valid public HTTPS reference.'); }
       }
+      input('Terms', terms);
       return store.idempotent(`${pubkey}:POST:/offers:${key}`, digest, async tx => {
         const offer = { id: randomUUID(), creator_pubkey: pubkey, terms, status: 'draft', event_id: null,
           ...(videoId ? { video_id: videoId } : {}), created_at: now() };
