@@ -75,6 +75,22 @@ function readCorsOrigins(env) {
   }))];
 }
 
+function readDocsAuth(env) {
+  const username = env.SWAGGER_UI_USERNAME?.trim() || null;
+  const password = env.SWAGGER_UI_PASSWORD || null;
+  if (Boolean(username) !== Boolean(password)) throw new Error('Set both SWAGGER_UI_USERNAME and SWAGGER_UI_PASSWORD');
+  if (username && (username.length > 128 || username.includes(':') || /[\r\n]/.test(username))) {
+    throw new Error('SWAGGER_UI_USERNAME must be at most 128 characters and must not contain a colon or newline');
+  }
+  if (password && (password.length < 32 || password.length > 256 || /[\r\n]/.test(password))) {
+    throw new Error('SWAGGER_UI_PASSWORD must contain at least 32 and at most 256 characters, with no newlines');
+  }
+  if (env.NODE_ENV === 'production' && (!username || !password)) {
+    throw new Error('Production requires SWAGGER_UI_USERNAME and SWAGGER_UI_PASSWORD to protect API documentation');
+  }
+  return { username, password, readOnly: env.NODE_ENV === 'production' };
+}
+
 export function readConfig(env = process.env) {
   const port = Number(env.PORT || 3000);
   const kind = Number(env.NOSTR_OFFER_KIND);
@@ -95,7 +111,8 @@ export function readConfig(env = process.env) {
   // Cloud Run sets K_SERVICE; local development keeps the safer loopback default.
   const host = env.HOST || (env.K_SERVICE ? '0.0.0.0' : '127.0.0.1');
   const corsOrigins = readCorsOrigins(env);
+  const docsAuth = readDocsAuth(env);
   return { host, port, origin: origin.origin, corsOrigins, databaseUrl: env.DATABASE_URL,
     kind, attestorPubkey, attestorSecretKey, relays, lndRestUrl: readLndUrl(env.LND_REST_URL), lndMacaroon: env.LND_MACAROON?.trim() || null,
-    cloudinary: readCloudinary(env) };
+    cloudinary: readCloudinary(env), docsAuth };
 }

@@ -13,22 +13,24 @@ POST retries use a persistent idempotency record. Reusing a key with different r
 
 ## Local setup
 
-The dependency installation requested during implementation was declined. The new `pg` and `nostr-tools` dependencies are declared but have not been installed here; the lockfile still reflects Day 1. Run `npm install` to install them and update the lockfile before committing it or using `npm ci`.
+Use Node.js 22 or newer and install the versions in the lockfile:
 
 ```bash
 cd backend
-npm install
+npm ci
 cp .env.example .env
 ```
 
-Start the local PostgreSQL database with `docker compose up -d --wait postgres` from the repository root; see the [local database guide](local-database.md). The example `DATABASE_URL` already matches that service. Configure `NOSTR_OFFER_KIND`, `NOSTR_ATTESTOR_PUBKEY`, and `NOSTR_RELAYS` in `.env`. The attestor is a public key only; the server does not require a creator private key or an attestor private key for Day 2. Use a development relay and sample terms while testing. No production ContentPort event kind is assigned.
+Start the local PostgreSQL database with `docker compose up -d --wait postgres` from the repository root; see the [local database guide](local-database.md). The example `DATABASE_URL` matches that local service. The Nostr offer kind, attestor public key, and relay in `.env.example` are local placeholders; choose development values before using the API. Never use those sample values for production.
 
 ```bash
 npm run migrate
 npm start
 ```
 
-The server uses Node's HTTP and WebSocket implementations, PostgreSQL through `pg`, and `nostr-tools/pure` for event verification. It binds to localhost by default. Place the frontend behind the same origin or a development proxy; cross-origin browser access is not configured. Set `PUBLIC_ORIGIN` to the externally visible API origin so signed request URLs match exactly.
+`npm run migrate` records applied SQL migration checksums and is safe to run again without reapplying unchanged migrations. The server loads `.env` only if present, defaults to loopback locally, and uses the hosting platform's `PORT` and all-interface bind on Cloud Run. Set `PUBLIC_ORIGIN` to the externally visible API origin so signed request URLs match exactly. Configure `CORS_ORIGINS` with exact HTTPS frontend origins when cross-origin browser access is needed; localhost HTTP origins are allowed for development.
+
+`GET /health/live` checks process liveness; `GET /health/ready` checks database connectivity and required tables. In production, configure `SWAGGER_UI_USERNAME` and `SWAGGER_UI_PASSWORD` from a secret manager; `/docs/` uses HTTP Basic authentication and only permits read operations.
 
 ## Authentication for frontend integration
 
@@ -49,8 +51,8 @@ Offer event templates can be built using `buildOfferEvent` from `src/services/no
 
 ## Current validation and limits
 
-Unit tests cover creation, private reads, idempotency, signature-verifier rejection, ownership, offer immutability, request binding, and positive/negative/timeout relay acknowledgements using test doubles. A real cryptography test runs when `nostr-tools` is installed. PostgreSQL integration tests require an explicitly provided disposable `TEST_DATABASE_URL`.
+Unit tests cover creation, private reads, idempotency, signature-verifier rejection, ownership, offer immutability, request binding, and positive/negative/timeout relay acknowledgements using test doubles. PostgreSQL integration tests require an explicitly provided disposable `TEST_DATABASE_URL`; they create and remove a unique schema, so never point that variable at production.
 
-Installation, PostgreSQL integration, and publication to a real relay have not been verified in this environment. No public offer has been published during development. Payment routes are still specifications and return `404` until implemented. Signing UI, wallet integration, production rate limiting, and deployment configuration remain future work.
+The current singular `/api/offers/{id}/payment` and `/status` routes exercise the local LND development adapter only; they are not the approved creator Lightning Address production flow. The Speed webhook aliases are unavailable because a webhook secret is not wired through runtime configuration. No live production payment or deployment is performed by this guide. Settlement-proof PoC, account-free buyer recovery, and production rollout remain gated by the implementation plan.
 
 Protocol references: [NIP-01 event and relay protocol](https://github.com/nostr-protocol/nips/blob/master/01.md), [NIP-98 HTTP authorization](https://github.com/nostr-protocol/nips/blob/master/98.md), and [nostr-tools](https://github.com/nbd-wtf/nostr-tools).

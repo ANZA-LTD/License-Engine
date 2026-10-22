@@ -2,16 +2,48 @@
   "openapi": "3.1.0",
   "info": {
     "title": "ContentPort API",
-    "version": "0.3.0",
-    "description": "Offer, payment and license routes, plus the content layer that connects a creator-owned video to an existing offer."
+    "version": "0.4.0",
+    "description": "Implemented offer, development payment, creator content, webhook and health routes. The current LND payment route is local/development only; it is not the approved production Lightning Address flow."
   },
   "servers": [
     {
-      "url": "http://localhost:3000/api"
+      "url": "/",
+      "description": "Same origin as the API server; paths include /api where applicable."
     }
   ],
   "components": {
     "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+                "pattern": "\\S"
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+                "pattern": "\\S"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
       "Terms": {
         "type": "object",
         "properties": {
@@ -95,592 +127,6 @@
           "amount_sats",
           "usage_rights",
           "duration"
-        ],
-        "additionalProperties": false
-      },
-      "Creator": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "nostr_pubkey": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "wallet_connection_ref": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "created_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "id",
-          "nostr_pubkey",
-          "wallet_connection_ref",
-          "created_at"
-        ],
-        "additionalProperties": false
-      },
-      "Offer": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "creator_pubkey": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "terms": {
-            "type": "object",
-            "properties": {
-              "title": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200,
-                "pattern": "\\S"
-              },
-              "description": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000,
-                "pattern": "\\S"
-              },
-              "brand": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200,
-                "pattern": "\\S"
-              },
-              "content_url": {
-                "type": "string",
-                "pattern": "^https://[^\\s]+$",
-                "maxLength": 2048
-              },
-              "content_sha256": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "amount_sats": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
-              },
-              "usage_rights": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000,
-                "pattern": "\\S"
-              },
-              "duration": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "const": "fixed"
-                      },
-                      "days": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 36500
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "days"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "const": "perpetual"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "additionalProperties": false
-                  }
-                ]
-              }
-            },
-            "required": [
-              "brand",
-              "content_url",
-              "content_sha256",
-              "amount_sats",
-              "usage_rights",
-              "duration"
-            ],
-            "additionalProperties": false
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "draft",
-              "publishing",
-              "published",
-              "licensed"
-            ]
-          },
-          "event_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "created_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "id",
-          "creator_pubkey",
-          "terms",
-          "status",
-          "event_id",
-          "created_at"
-        ],
-        "additionalProperties": false
-      },
-      "Acceptance": {
-        "type": "object",
-        "properties": {
-          "offer_event_id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "accepted": {
-            "const": true
-          },
-          "licensee_name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "pattern": "\\S"
-          }
-        },
-        "required": [
-          "offer_event_id",
-          "accepted",
-          "licensee_name"
-        ],
-        "additionalProperties": false
-      },
-      "Payment": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "offer_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "offer_event_id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "amount_sats": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "payment_hash": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "invoice": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000,
-            "pattern": "\\S"
-          },
-          "expires_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "pending",
-              "expired",
-              "settled"
-            ]
-          },
-          "settled_at": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "id",
-          "offer_id",
-          "offer_event_id",
-          "amount_sats",
-          "payment_hash",
-          "invoice",
-          "expires_at",
-          "status",
-          "settled_at"
-        ],
-        "additionalProperties": false
-      },
-      "License": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "offer_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "offer_event_id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "payment_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "starts_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "ends_at": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "publication_status": {
-            "type": "string",
-            "enum": [
-              "pending",
-              "published"
-            ]
-          },
-          "event_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "id",
-          "offer_id",
-          "offer_event_id",
-          "payment_id",
-          "starts_at",
-          "ends_at",
-          "publication_status",
-          "event_id"
-        ],
-        "additionalProperties": false
-      },
-      "SignedEvent": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "pubkey": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "created_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "kind": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 65535
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          "content": {
-            "type": "string"
-          },
-          "sig": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{128}$"
-          }
-        },
-        "required": [
-          "id",
-          "pubkey",
-          "created_at",
-          "kind",
-          "tags",
-          "content",
-          "sig"
-        ],
-        "additionalProperties": false
-      },
-      "PaymentStatus": {
-        "type": "object",
-        "properties": {
-          "payment": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9_-]{1,100}$"
-              },
-              "offer_id": {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9_-]{1,100}$"
-              },
-              "offer_event_id": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "amount_sats": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
-              },
-              "payment_hash": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "invoice": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000,
-                "pattern": "\\S"
-              },
-              "expires_at": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "pending",
-                  "expired",
-                  "settled"
-                ]
-              },
-              "settled_at": {
-                "anyOf": [
-                  {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "offer_id",
-              "offer_event_id",
-              "amount_sats",
-              "payment_hash",
-              "invoice",
-              "expires_at",
-              "status",
-              "settled_at"
-            ],
-            "additionalProperties": false
-          },
-          "license": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z0-9_-]{1,100}$"
-                  },
-                  "offer_id": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z0-9_-]{1,100}$"
-                  },
-                  "offer_event_id": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{64}$"
-                  },
-                  "payment_id": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z0-9_-]{1,100}$"
-                  },
-                  "starts_at": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "ends_at": {
-                    "anyOf": [
-                      {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "publication_status": {
-                    "type": "string",
-                    "enum": [
-                      "pending",
-                      "published"
-                    ]
-                  },
-                  "event_id": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "pattern": "^[0-9a-f]{64}$"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  }
-                },
-                "required": [
-                  "id",
-                  "offer_id",
-                  "offer_event_id",
-                  "payment_id",
-                  "starts_at",
-                  "ends_at",
-                  "publication_status",
-                  "event_id"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "payment",
-          "license"
-        ],
-        "additionalProperties": false
-      },
-      "Error": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000,
-                "pattern": "\\S"
-              },
-              "message": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000,
-                "pattern": "\\S"
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "additionalProperties": false
-      },
-      "Settlement": {
-        "type": "object",
-        "properties": {
-          "offer_event_id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "payment_hash": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "amount_sats": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "settled_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "offer_event_id",
-          "payment_hash",
-          "amount_sats",
-          "settled_at"
         ],
         "additionalProperties": false
       },
@@ -770,9 +216,27 @@
           "usage_rights",
           "duration"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "content_url",
+              "content_sha256"
+            ],
+            "not": {
+              "required": [
+                "video_id"
+              ]
+            }
+          },
+          {
+            "required": [
+              "video_id"
+            ]
+          }
+        ]
       },
-      "MediaListing": {
+      "Offer": {
         "type": "object",
         "properties": {
           "id": {
@@ -784,90 +248,7 @@
             "pattern": "^[0-9a-f]{64}$"
           },
           "terms": {
-            "type": "object",
-            "properties": {
-              "title": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200,
-                "pattern": "\\S"
-              },
-              "description": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000,
-                "pattern": "\\S"
-              },
-              "brand": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200,
-                "pattern": "\\S"
-              },
-              "content_url": {
-                "type": "string",
-                "pattern": "^https://[^\\s]+$",
-                "maxLength": 2048
-              },
-              "content_sha256": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "amount_sats": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
-              },
-              "usage_rights": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000,
-                "pattern": "\\S"
-              },
-              "duration": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "const": "fixed"
-                      },
-                      "days": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 36500
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "days"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "const": "perpetual"
-                      }
-                    },
-                    "required": [
-                      "type"
-                    ],
-                    "additionalProperties": false
-                  }
-                ]
-              }
-            },
-            "required": [
-              "brand",
-              "content_url",
-              "content_sha256",
-              "amount_sats",
-              "usage_rights",
-              "duration"
-            ],
-            "additionalProperties": false
+            "$ref": "#/components/schemas/Terms"
           },
           "status": {
             "type": "string",
@@ -875,6 +256,7 @@
               "draft",
               "publishing",
               "published",
+              "licensing",
               "licensed"
             ]
           },
@@ -894,22 +276,78 @@
             "minimum": 0,
             "maximum": 9007199254740991
           },
-          "title": {
+          "video_id": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "pattern": "\\S"
+            "pattern": "^[A-Za-z0-9_-]{1,100}$"
           },
-          "description": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000,
-            "pattern": "\\S"
+          "payment": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "invoice_id": {
+                "type": "string"
+              },
+              "payment_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "request": {
+                "type": "string"
+              },
+              "amount_sats": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "settled"
+                ]
+              },
+              "reference": {
+                "type": "string"
+              },
+              "expires_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                ]
+              },
+              "settled_at": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "provider",
+              "invoice_id",
+              "payment_hash",
+              "request",
+              "amount_sats",
+              "status",
+              "reference"
+            ],
+            "additionalProperties": false
           },
-          "preview_image_url": {
+          "license_event_id": {
             "type": "string",
-            "pattern": "^https://[^\\s]+$",
-            "maxLength": 2048
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "licensed_at": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
           }
         },
         "required": [
@@ -918,209 +356,18 @@
           "terms",
           "status",
           "event_id",
-          "created_at",
-          "title",
-          "description",
-          "preview_image_url"
-        ],
-        "additionalProperties": false
-      },
-      "MediaAsset": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "offer_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "creator_pubkey": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "original_object_key": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,200}$"
-          },
-          "original_sha256": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "mime_type": {
-            "type": "string",
-            "enum": [
-              "image/jpeg",
-              "image/png",
-              "image/webp",
-              "video/mp4",
-              "video/webm",
-              "audio/mpeg",
-              "audio/wav"
-            ]
-          },
-          "size_bytes": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "created_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "id",
-          "offer_id",
-          "creator_pubkey",
-          "original_object_key",
-          "original_sha256",
-          "mime_type",
-          "size_bytes",
           "created_at"
         ],
         "additionalProperties": false
       },
-      "AcceptanceRecord": {
+      "SignedEvent": {
         "type": "object",
         "properties": {
           "id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "buyer_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "offer_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "offer_event_id": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
           },
-          "accepted": {
-            "const": true
-          },
-          "licensee_name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "pattern": "\\S"
-          },
-          "accepted_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "id",
-          "buyer_id",
-          "offer_id",
-          "offer_event_id",
-          "accepted",
-          "licensee_name",
-          "accepted_at"
-        ],
-        "additionalProperties": false
-      },
-      "Order": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "buyer_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "offer_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "offer_event_id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "acceptance_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "payment_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9_-]{1,100}$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "license_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9_-]{1,100}$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "pending",
-              "paid",
-              "expired",
-              "failed"
-            ]
-          },
-          "created_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "id",
-          "buyer_id",
-          "offer_id",
-          "offer_event_id",
-          "acceptance_id",
-          "payment_id",
-          "license_id",
-          "status",
-          "created_at"
-        ],
-        "additionalProperties": false
-      },
-      "DownloadGrant": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "buyer_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "license_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "asset_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "token_hash": {
+          "pubkey": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
           },
@@ -1129,191 +376,194 @@
             "minimum": 0,
             "maximum": 9007199254740991
           },
-          "expires_at": {
+          "kind": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 65535
           },
-          "used_at": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
               }
-            ]
+            }
           },
-          "revoked_at": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "content": {
+            "type": "string"
+          },
+          "sig": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{128}$"
           }
         },
         "required": [
           "id",
-          "buyer_id",
-          "license_id",
-          "asset_id",
-          "token_hash",
+          "pubkey",
           "created_at",
-          "expires_at",
-          "used_at",
-          "revoked_at"
+          "kind",
+          "tags",
+          "content",
+          "sig"
         ],
         "additionalProperties": false
       },
-      "Video": {
+      "Discovery": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
-          },
-          "owner_public_key": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "pattern": "\\S"
-          },
-          "cloud_name": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,64}$"
-          },
-          "public_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_\\-/]{1,200}$"
-          },
-          "asset_version": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "resource_type": {
-            "const": "video"
-          },
-          "format": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9]{1,8}$"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "processing",
-              "ready",
-              "failed"
-            ]
-          },
-          "reference_sha256": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "original_sha256": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
+          "offers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "offer_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,100}$"
+                },
+                "video_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,100}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "title": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "pattern": "\\S"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "description": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000,
+                      "pattern": "\\S"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "creator_public_key": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "preview_url": {
+                  "type": "string",
+                  "pattern": "^https://[^\\s]+$",
+                  "maxLength": 2048
+                },
+                "thumbnail_url": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^https://[^\\s]+$",
+                      "maxLength": 2048
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "duration_seconds": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "license_duration": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "const": "fixed"
+                        },
+                        "days": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 36500
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "days"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "const": "perpetual"
+                        }
+                      },
+                      "required": [
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "price_sats": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "published",
+                    "licensing"
+                  ]
+                },
+                "created_at": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
               },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "bytes": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "duration_seconds": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "width": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "height": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "upload_session_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{16,100}$"
-          },
-          "created_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "updated_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
+              "required": [
+                "offer_id",
+                "video_id",
+                "title",
+                "description",
+                "creator_public_key",
+                "preview_url",
+                "thumbnail_url",
+                "duration_seconds",
+                "license_duration",
+                "price_sats",
+                "status",
+                "created_at"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
-          "id",
-          "owner_public_key",
-          "title",
-          "cloud_name",
-          "public_id",
-          "asset_version",
-          "resource_type",
-          "format",
-          "status",
-          "reference_sha256",
-          "original_sha256",
-          "bytes",
-          "duration_seconds",
-          "width",
-          "height",
-          "upload_session_id",
-          "created_at",
-          "updated_at"
+          "offers"
         ],
         "additionalProperties": false
       },
@@ -1432,63 +682,6 @@
           "duration_seconds",
           "width",
           "height"
-        ],
-        "additionalProperties": false
-      },
-      "UploadAuthorization": {
-        "type": "object",
-        "properties": {
-          "cloud_name": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,64}$"
-          },
-          "api_key": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,64}$"
-          },
-          "resource_type": {
-            "const": "video"
-          },
-          "folder": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_\\-/]{1,200}$"
-          },
-          "context": {
-            "type": "string",
-            "pattern": "^contentport_session=[A-Za-z0-9_-]{16,100}$"
-          },
-          "upload_session_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{16,100}$"
-          },
-          "timestamp": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "signature": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{40}$"
-          },
-          "allowed_formats": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "string",
-              "pattern": "^[a-z0-9]{1,8}$"
-            }
-          }
-        },
-        "required": [
-          "cloud_name",
-          "api_key",
-          "resource_type",
-          "folder",
-          "context",
-          "upload_session_id",
-          "timestamp",
-          "signature",
-          "allowed_formats"
         ],
         "additionalProperties": false
       },
@@ -1928,305 +1121,60 @@
         ],
         "additionalProperties": false
       },
-      "DiscoveryListing": {
+      "UploadAuthorization": {
         "type": "object",
         "properties": {
-          "offer_id": {
+          "cloud_name": {
             "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$"
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
           },
-          "video_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9_-]{1,100}$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200,
-                "pattern": "\\S"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000,
-                "pattern": "\\S"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "creator_public_key": {
+          "api_key": {
             "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
           },
-          "preview_url": {
+          "resource_type": {
+            "const": "video"
+          },
+          "folder": {
             "type": "string",
-            "pattern": "^https://[^\\s]+$",
-            "maxLength": 2048
+            "pattern": "^[A-Za-z0-9_\\-/]{1,200}$"
           },
-          "thumbnail_url": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^https://[^\\s]+$",
-                "maxLength": 2048
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "context": {
+            "type": "string",
+            "pattern": "^contentport_session=[A-Za-z0-9_-]{16,100}$"
           },
-          "duration_seconds": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "upload_session_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{16,100}$"
           },
-          "license_duration": {
-            "oneOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "const": "fixed"
-                  },
-                  "days": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 36500
-                  }
-                },
-                "required": [
-                  "type",
-                  "days"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "const": "perpetual"
-                  }
-                },
-                "required": [
-                  "type"
-                ],
-                "additionalProperties": false
-              }
-            ]
-          },
-          "price_sats": {
+          "timestamp": {
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
           },
-          "status": {
+          "signature": {
             "type": "string",
-            "enum": [
-              "published",
-              "licensing"
-            ]
+            "pattern": "^[0-9a-f]{40}$"
           },
-          "created_at": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "offer_id",
-          "video_id",
-          "title",
-          "description",
-          "creator_public_key",
-          "preview_url",
-          "thumbnail_url",
-          "duration_seconds",
-          "license_duration",
-          "price_sats",
-          "status",
-          "created_at"
-        ],
-        "additionalProperties": false
-      },
-      "Discovery": {
-        "type": "object",
-        "properties": {
-          "offers": {
+          "allowed_formats": {
             "type": "array",
+            "minItems": 1,
             "items": {
-              "type": "object",
-              "properties": {
-                "offer_id": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,100}$"
-                },
-                "video_id": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "pattern": "^[A-Za-z0-9_-]{1,100}$"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "title": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "pattern": "\\S"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "description": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 2000,
-                      "pattern": "\\S"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "creator_public_key": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{64}$"
-                },
-                "preview_url": {
-                  "type": "string",
-                  "pattern": "^https://[^\\s]+$",
-                  "maxLength": 2048
-                },
-                "thumbnail_url": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "pattern": "^https://[^\\s]+$",
-                      "maxLength": 2048
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "duration_seconds": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "license_duration": {
-                  "oneOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "type": {
-                          "const": "fixed"
-                        },
-                        "days": {
-                          "type": "integer",
-                          "minimum": 1,
-                          "maximum": 36500
-                        }
-                      },
-                      "required": [
-                        "type",
-                        "days"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "type": {
-                          "const": "perpetual"
-                        }
-                      },
-                      "required": [
-                        "type"
-                      ],
-                      "additionalProperties": false
-                    }
-                  ]
-                },
-                "price_sats": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 9007199254740991
-                },
-                "status": {
-                  "type": "string",
-                  "enum": [
-                    "published",
-                    "licensing"
-                  ]
-                },
-                "created_at": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                }
-              },
-              "required": [
-                "offer_id",
-                "video_id",
-                "title",
-                "description",
-                "creator_public_key",
-                "preview_url",
-                "thumbnail_url",
-                "duration_seconds",
-                "license_duration",
-                "price_sats",
-                "status",
-                "created_at"
-              ],
-              "additionalProperties": false
+              "type": "string",
+              "pattern": "^[a-z0-9]{1,8}$"
             }
           }
         },
         "required": [
-          "offers"
+          "cloud_name",
+          "api_key",
+          "resource_type",
+          "folder",
+          "context",
+          "upload_session_id",
+          "timestamp",
+          "signature",
+          "allowed_formats"
         ],
         "additionalProperties": false
       },
@@ -2246,6 +1194,139 @@
           "deleted"
         ],
         "additionalProperties": false
+      },
+      "PaymentRequest": {
+        "type": "object",
+        "properties": {
+          "offerId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,100}$"
+          },
+          "amountSats": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "paymentRequest": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "offerId",
+          "amountSats",
+          "paymentRequest"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentStatus": {
+        "type": "object",
+        "properties": {
+          "offerId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,100}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "OPEN",
+              "PAYMENT_PENDING",
+              "PAYMENT_SETTLED",
+              "LICENSED"
+            ]
+          },
+          "paymentSettledAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "licensedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "licenseNostrEventId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "offerId",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookReceipt": {
+        "type": "object",
+        "properties": {
+          "received": {
+            "const": true
+          },
+          "provider": {
+            "type": "string"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "offerId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,100}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "received",
+          "provider",
+          "eventType",
+          "offerId"
+        ],
+        "additionalProperties": false
+      },
+      "HealthAlive": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "alive"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "HealthReady": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "ready"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "HealthNotReady": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "not_ready"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "error"
+        ],
+        "additionalProperties": false
       }
     },
     "securitySchemes": {
@@ -2253,17 +1334,81 @@
         "type": "apiKey",
         "in": "header",
         "name": "Authorization",
-        "description": "Nostr <base64 signed NIP-98 event>. POST events must bind the raw body hash and contentport-idempotency-key tag. See docs/day-2.md."
+        "description": "Nostr <base64 signed NIP-98 event>. Protected POST requests also require Idempotency-Key and bind the raw body hash and key in the signed event."
+      },
+      "speedWebhookSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "webhook-signature",
+        "description": "Speed webhook HMAC signature. The server currently does not load a Speed webhook secret, so these routes reject callbacks until that integration is configured."
       }
     }
   },
   "paths": {
-    "/offers": {
+    "/health/live": {
       "get": {
+        "tags": [
+          "Health"
+        ],
+        "operationId": "getLiveness",
+        "summary": "Check that the process responds",
+        "responses": {
+          "200": {
+            "description": "Process is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthAlive"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "operationId": "getReadiness",
+        "summary": "Check required database tables and connectivity",
+        "responses": {
+          "200": {
+            "description": "Database and required schema are available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReady"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database or required schema is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthNotReady"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/offers": {
+      "get": {
+        "tags": [
+          "Offers"
+        ],
         "operationId": "discoverOffers",
         "summary": "List published offers for brand discovery",
         "security": [
-          {}
+          {},
+          {
+            "nostrAuth": []
+          }
         ],
         "responses": {
           "200": {
@@ -2346,6 +1491,26 @@
               }
             }
           },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Dependency unavailable",
             "content": {
@@ -2359,9 +1524,12 @@
         }
       },
       "post": {
+        "tags": [
+          "Offers"
+        ],
         "operationId": "createOffer",
-        "summary": "Create a draft owned by the authenticated creator, optionally linked to an owned video",
-        "description": "Supply either video_id or a complete content_url and content_sha256, never both. With video_id the server resolves the canonical watermarked preview and fingerprint from the video record and ignores any client media reference.",
+        "summary": "Create a creator-owned draft offer",
+        "description": "Requires creator Nostr HTTP authorization. Without video_id, provide content_url and content_sha256. With video_id, the video must be owned and ready; the server resolves the canonical media reference and ignores client-supplied content_url or content_sha256.",
         "security": [
           {
             "nostrAuth": []
@@ -2384,6 +1552,17 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/OfferDraft"
+              },
+              "example": {
+                "brand": "Example Brand",
+                "content_url": "https://example.com/watermarked-preview.mp4",
+                "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "amount_sats": 25000,
+                "usage_rights": "Non-exclusive organic social use; no paid advertising.",
+                "duration": {
+                  "type": "fixed",
+                  "days": 30
+                }
               }
             }
           }
@@ -2469,6 +1648,26 @@
               }
             }
           },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Dependency unavailable",
             "content": {
@@ -2482,7 +1681,7 @@
         }
       }
     },
-    "/offers/{id}": {
+    "/api/offers/{id}": {
       "parameters": [
         {
           "name": "id",
@@ -2495,8 +1694,11 @@
         }
       ],
       "get": {
+        "tags": [
+          "Offers"
+        ],
         "operationId": "getOffer",
-        "summary": "Read a published offer; drafts require owner authentication",
+        "summary": "Read an offer; private drafts require creator authorization",
         "security": [
           {},
           {
@@ -2584,6 +1786,26 @@
               }
             }
           },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Dependency unavailable",
             "content": {
@@ -2597,7 +1819,7 @@
         }
       }
     },
-    "/offers/{id}/publish": {
+    "/api/offers/{id}/publish": {
       "parameters": [
         {
           "name": "id",
@@ -2610,8 +1832,11 @@
         }
       ],
       "post": {
+        "tags": [
+          "Offers"
+        ],
         "operationId": "publishOffer",
-        "summary": "Validate creator signature and queue the exact signed offer",
+        "summary": "Validate and queue the exact creator-signed offer",
         "security": [
           {
             "nostrAuth": []
@@ -2634,13 +1859,27 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SignedEvent"
+              },
+              "example": {
+                "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "created_at": 1700000000,
+                "kind": 9998,
+                "tags": [
+                  [
+                    "t",
+                    "contentport-offer-v1"
+                  ]
+                ],
+                "content": "{\"schema\":\"contentport.offer.v1\",\"terms\":{}}",
+                "sig": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
               }
             }
           }
         },
         "responses": {
           "202": {
-            "description": "Publication queued; poll for relay acknowledgement",
+            "description": "Publication queued",
             "content": {
               "application/json": {
                 "schema": {
@@ -2719,6 +1958,26 @@
               }
             }
           },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Dependency unavailable",
             "content": {
@@ -2732,7 +1991,7 @@
         }
       }
     },
-    "/offers/{id}/payments": {
+    "/api/offers/{id}/payment": {
       "parameters": [
         {
           "name": "id",
@@ -2745,9 +2004,15 @@
         }
       ],
       "post": {
-        "operationId": "createPayment",
-        "summary": "PLANNED: record buyer acceptance and request an invoice from the creator wallet",
+        "tags": [
+          "Development payment"
+        ],
+        "operationId": "createDevelopmentPayment",
+        "summary": "Request a local LND invoice for a published offer",
+        "description": "Development-only legacy route. It uses the single configured local LND node and does not route to a creator Lightning Address or independently prove creator-beneficiary settlement. Do not use as the production payment path.",
+        "x-availability": "development-only",
         "security": [
+          {},
           {
             "nostrAuth": []
           }
@@ -2756,30 +2021,31 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]{16,128}$"
-            }
+            },
+            "description": "Required only when optional Nostr authorization is supplied."
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Acceptance"
+        "responses": {
+          "200": {
+            "description": "Existing unexpired invoice returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRequest"
+                }
               }
             }
-          }
-        },
-        "responses": {
+          },
           "201": {
             "description": "Invoice created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Payment"
+                  "$ref": "#/components/schemas/PaymentRequest"
                 }
               }
             }
@@ -2854,6 +2120,26 @@
               }
             }
           },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Dependency unavailable",
             "content": {
@@ -2867,7 +2153,7 @@
         }
       }
     },
-    "/payments/{id}": {
+    "/api/offers/{id}/status": {
       "parameters": [
         {
           "name": "id",
@@ -2880,16 +2166,22 @@
         }
       ],
       "get": {
-        "operationId": "getPayment",
-        "summary": "PLANNED: read payment and license status as buyer or owning creator",
+        "tags": [
+          "Development payment"
+        ],
+        "operationId": "getDevelopmentPaymentStatus",
+        "summary": "Read current offer and local LND payment status",
+        "description": "Public legacy status endpoint. A client-visible status is not independent proof of funds movement.",
+        "x-availability": "development-only",
         "security": [
+          {},
           {
             "nostrAuth": []
           }
         ],
         "responses": {
           "200": {
-            "description": "Settlement and publication status",
+            "description": "Current payment and license publication summary",
             "content": {
               "application/json": {
                 "schema": {
@@ -2968,6 +2260,26 @@
               }
             }
           },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Dependency unavailable",
             "content": {
@@ -2981,10 +2293,327 @@
         }
       }
     },
-    "/videos": {
+    "/api/webhooks/lightning": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "receiveLegacyLightningWebhook",
+        "summary": "Legacy Speed webhook alias (unavailable until secret configuration is implemented)",
+        "description": "The route validates Speed HMAC headers, but the current runtime does not load a webhook secret; callbacks cannot authenticate and must not be treated as settlement evidence.",
+        "x-availability": "unavailable",
+        "security": [
+          {
+            "speedWebhookSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook receipt recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not permitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Use application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webhooks/speed/lightning": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "receiveSpeedLightningWebhook",
+        "summary": "Legacy Speed webhook (unavailable until secret configuration is implemented)",
+        "description": "Alias of POST /api/webhooks/lightning. The current runtime does not load a webhook secret, so callbacks cannot authenticate.",
+        "x-availability": "unavailable",
+        "security": [
+          {
+            "speedWebhookSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook receipt recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not permitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Use application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/videos": {
       "get": {
+        "tags": [
+          "Creator videos"
+        ],
         "operationId": "listMyVideos",
-        "summary": "List the authenticated creator’s own videos and their offer relationships",
+        "summary": "List the authenticated creator’s videos and offer relationships",
         "security": [
           {
             "nostrAuth": []
@@ -2992,7 +2621,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Creator library",
+            "description": "Creator video library",
             "content": {
               "application/json": {
                 "schema": {
@@ -3071,6 +2700,26 @@
               }
             }
           },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Dependency unavailable",
             "content": {
@@ -3084,9 +2733,12 @@
         }
       },
       "post": {
+        "tags": [
+          "Creator videos"
+        ],
         "operationId": "registerVideo",
-        "summary": "Register a Cloudinary asset uploaded directly by the browser",
-        "description": "The browser uploads straight to Cloudinary using parameters signed by POST /videos/upload-authorization, then sends the resulting asset metadata here. Ownership comes from the authenticated Nostr public key, never from the request body.",
+        "summary": "Register a Cloudinary upload",
+        "description": "Ownership comes from the authenticated Nostr public key. The upload must use a valid server-issued upload session.",
         "security": [
           {
             "nostrAuth": []
@@ -3109,6 +2761,21 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/VideoRegistration"
+              },
+              "example": {
+                "title": "Example video",
+                "upload_session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "public_id": "contentport/videos/example",
+                "asset_version": 1,
+                "resource_type": "video",
+                "format": "mp4",
+                "context": "contentport_session=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "status": "ready",
+                "original_sha256": null,
+                "bytes": 4096,
+                "duration_seconds": 30,
+                "width": 1920,
+                "height": 1080
               }
             }
           }
@@ -3194,6 +2861,26 @@
               }
             }
           },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Dependency unavailable",
             "content": {
@@ -3207,10 +2894,13 @@
         }
       }
     },
-    "/videos/upload-authorization": {
+    "/api/videos/upload-authorization": {
       "post": {
+        "tags": [
+          "Creator videos"
+        ],
         "operationId": "authorizeVideoUpload",
-        "summary": "Sign Cloudinary upload parameters for one direct browser upload",
+        "summary": "Sign Cloudinary parameters for one direct browser upload",
         "security": [
           {
             "nostrAuth": []
@@ -3229,7 +2919,7 @@
         ],
         "responses": {
           "201": {
-            "description": "Signed upload parameters; the API secret is never returned",
+            "description": "Signed upload parameters; the API secret is not returned",
             "content": {
               "application/json": {
                 "schema": {
@@ -3308,6 +2998,26 @@
               }
             }
           },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Dependency unavailable",
             "content": {
@@ -3321,7 +3031,7 @@
         }
       }
     },
-    "/videos/{id}": {
+    "/api/videos/{id}": {
       "parameters": [
         {
           "name": "id",
@@ -3334,7 +3044,10 @@
         }
       ],
       "get": {
-        "operationId": "getVideo",
+        "tags": [
+          "Creator videos"
+        ],
+        "operationId": "getMyVideo",
         "summary": "Read one video owned by the authenticated creator",
         "security": [
           {
@@ -3343,7 +3056,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Owned video",
+            "description": "Owned video and related offers",
             "content": {
               "application/json": {
                 "schema": {
@@ -3422,6 +3135,26 @@
               }
             }
           },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Dependency unavailable",
             "content": {
@@ -3435,8 +3168,11 @@
         }
       },
       "delete": {
-        "operationId": "deleteVideo",
-        "summary": "Delete a video the authenticated creator owns and that no offer references",
+        "tags": [
+          "Creator videos"
+        ],
+        "operationId": "deleteMyVideo",
+        "summary": "Delete an owned video that no offer references",
         "security": [
           {
             "nostrAuth": []
@@ -3444,7 +3180,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Deleted",
+            "description": "Video deleted",
             "content": {
               "application/json": {
                 "schema": {
@@ -3515,6 +3251,26 @@
           },
           "415": {
             "description": "Use application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
             "content": {
               "application/json": {
                 "schema": {

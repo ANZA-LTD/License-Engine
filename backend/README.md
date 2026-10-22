@@ -28,18 +28,31 @@ when Cloud Run sets `K_SERVICE`), `PUBLIC_ORIGIN`, and `CORS_ORIGINS`.
 `CORS_ORIGINS` is a comma-separated list of exact HTTPS origins; HTTP is
 permitted only for localhost development. The older singular `CORS_ORIGIN`
 setting remains supported. The server does not enable browser CORS access when
-no origin is configured.
+no origin is configured. When `NODE_ENV=production`, `SWAGGER_UI_USERNAME`
+and a random `SWAGGER_UI_PASSWORD` of at least 32 characters are also required.
 
 `GET /health/live` only reports whether the process can answer requests.
 `GET /health/ready` additionally checks database connectivity and the tables
 required by the current API schema. A temporary database failure makes
 readiness return `503` without making liveness fail.
 
+The interactive API reference is served at `/docs/`; its OpenAPI JSON is at
+`/docs/openapi.json`. In development, it uses documentation credentials when
+configured. With `NODE_ENV=production`, both `SWAGGER_UI_USERNAME` and
+`SWAGGER_UI_PASSWORD` are mandatory and protect the UI, specification, and
+static assets with HTTP Basic authentication. Set the password to a random
+value of at least 32 characters (for example, generate one with
+`node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`).
+Use HTTPS and store production credentials in Secret Manager. Production
+Swagger UI permits read-only operations only; the public product API is
+unchanged. Run `npm run contracts` to regenerate the OpenAPI document and
+Postman collection together.
+
 Build and run the backend container from this directory:
 
 ```powershell
 docker build -t anza-licensing-backend .
-docker run --rm -p 8080:8080 --env-file .env -e PORT=8080 anza-licensing-backend
+docker run --rm -p 8080:8080 --env-file .env -e PORT=8080 -e NODE_ENV=development anza-licensing-backend
 ```
 
 For local Docker runs, pass the existing local `.env` file at runtime (it is
@@ -62,7 +75,7 @@ TEST_DATABASE_URL="postgresql://contentport:change-me@localhost:5433/contentport
 | Deliverable | Documentation | Code |
 | :--- | :--- | :--- |
 | Data structures | [Data model](docs/data-model.md) | [Shared schemas](src/models/schemas.js) |
-| API contracts | [API guide](docs/api-contract.md), [OpenAPI JSON](docs/openapi.json) | [Contract source](src/contracts/contract.js) |
+| API contracts | [API guide](docs/api-contract.md), [OpenAPI JSON](docs/openapi.json), [Postman collection](docs/postman_collection.json) | [Contract source](src/contracts/contract.js) |
 | Nostr event structure | [Event design](docs/nostr-events.md) | [Event builders](src/services/nostr/events.js) |
 | Creator video and discovery | [Content layer](docs/content-layer.md) | [Content service](src/services/content/service.js), [Cloudinary](src/services/media/cloudinary.js) |
 

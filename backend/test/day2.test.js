@@ -61,6 +61,9 @@ test('create validates input, assigns creator, and replays the saved result', as
   await assert.rejects(service.create({ pubkey, body: { ...terms, amount_sats: 1 }, key: 'create-key-000001', digest: 'changed' }), { status: 409 });
   await assert.rejects(service.create({ body: { ...terms, amount_sats: -1 } }), { status: 400 });
   await assert.rejects(service.create({ body: { ...terms, content_url: 'https://user:password@example.com/' } }), { status: 400 });
+  const missingContentHash = { ...terms };
+  delete missingContentHash.content_sha256;
+  await assert.rejects(service.create({ pubkey, body: missingContentHash, key: 'create-key-000002', digest: 'invalid' }), { status: 400 });
 });
 test('payment requests a Polar LND invoice at the saved offer price and reuses an unexpired invoice', async () => {
   const invoices = [];
@@ -211,6 +214,11 @@ test('configuration rejects missing keys and insecure non-local relays', () => {
   assert.throws(() => readConfig({ ...env, NOSTR_RELAYS: 'ws://remote.example' }));
   assert.throws(() => readConfig({ ...env, CORS_ORIGINS: 'https://brands.example/path' }));
   assert.throws(() => readConfig({ ...env, CORS_ORIGINS: 'http://brands.example' }));
+  assert.throws(() => readConfig({ ...env, NODE_ENV: 'production' }), /Production requires/);
+  const productionDocs = readConfig({ ...env, NODE_ENV: 'production', SWAGGER_UI_USERNAME: 'docs',
+    SWAGGER_UI_PASSWORD: 'random-local-test-password-12345' }).docsAuth;
+  assert.equal(productionDocs.readOnly, true);
+  assert.throws(() => readConfig({ ...env, SWAGGER_UI_USERNAME: 'docs', SWAGGER_UI_PASSWORD: 'short' }), /at least 32 and at most 256/);
   assert.equal(matchOfferRoute('POST', '/api/offers').action, 'create');
   assert.equal(matchOfferRoute('POST', '/api/offers/abc/publish').action, 'publish');
 });
@@ -285,6 +293,44 @@ test('health checks separate liveness from database readiness and enforce exact 
   const deniedPreflight = await inject('/health/live', 'OPTIONS', { origin: 'https://attacker.example' });
   assert.equal(deniedPreflight.status, 204);
   assert.equal(deniedPreflight.headers['Access-Control-Allow-Origin'], undefined);
+  app.close();
+});
+
+test('Swagger documentation requires Basic Auth and production UI is read-only', async () => {
+  const { service } = setup();
+  const credentials = { username: 'docs', password: 'random-local-test-password-12345', readOnly: true };
+  const app = createApp({ service, verifyEvent: () => true, origin: 'https://api.example', docsAuth: credentials });
+  const inject = (url, headers = {}) => new Promise(resolve => {
+    const request = Readable.from([]);
+    Object.assign(request, { url, method: 'GET', headers });
+    let status;
+    const responseHeaders = {};
+    let body = '';
+    app.emit('request', request, {
+      setHeader(name, value) { responseHeaders[name] = value; },
+      writeHead(code, headers = {}) { status = code; Object.assign(responseHeaders, headers); },
+      end(value) { body = value ?? ''; resolve({ status, headers: responseHeaders, body }); }
+    });
+  });
+  const unauthorized = await inject('/docs/');
+  assert.equal(unauthorized.status, 401);
+  assert.match(unauthorized.headers['WWW-Authenticate'], /^Basic realm=/);
+  const docsRedirect = await inject('/docs');
+  assert.equal(docsRedirect.status, 308);
+  assert.equal(docsRedirect.headers.Location, '/docs/');
+  assert.equal((await inject('/docs/openapi.json')).status, 401);
+
+  const authorization = `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}`;
+  const page = await inject('/docs/', { authorization });
+  assert.equal(page.status, 200);
+  assert.match(page.headers['Content-Security-Policy'], /nonce-/);
+  assert.match(page.body, /supportedSubmitMethods:\["get","head","options"\]/);
+  const openApi = await inject('/docs/openapi.json', { authorization });
+  assert.equal(openApi.status, 200);
+  assert.match(openApi.headers['Content-Type'], /application\/json/);
+  const asset = await inject('/docs/swagger-ui.css', { authorization });
+  assert.equal(asset.status, 200);
+  assert.match(asset.headers['Content-Type'], /text\/css/);
   app.close();
 });
 

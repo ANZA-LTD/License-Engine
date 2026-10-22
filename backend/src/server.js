@@ -27,7 +27,7 @@ const service = createOfferService({ store, verifyEvent, paymentProvider, ...con
 const contentService = createContentService({ store, cloudinary: createCloudinary(config.cloudinary) });
 const publish = createRelayPublisher({ relays: config.relays });
 const server = createApp({ service, contentService, verifyEvent, origin: config.origin, corsOrigins: config.corsOrigins,
-  readinessCheck: checkDatabaseReadiness });
+  readinessCheck: checkDatabaseReadiness, docsAuth: config.docsAuth });
 let stopping = false;
 let active;
 const tick = () => { if (!stopping && !active) active = store.publishNext(publish).catch(error => console.error('Publication worker:', error.message)).finally(() => { active = undefined; }); };
