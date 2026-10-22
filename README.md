@@ -1,6 +1,6 @@
 <div align="center">
 
-# ContentPort
+# ANZA
 
 ### Creator-owned licensing offers, verifiable on Nostr and payable over Lightning.
 
@@ -15,28 +15,28 @@
 </div>
 
 > [!IMPORTANT]
-> ContentPort is an open-source MVP built for creators who need a clearer way to offer branded content, set licensing terms, and keep independently verifiable evidence of what they offered.
+> ANZA is an open-source MVP built for creators who need a clearer way to offer branded content, set licensing terms, and keep independently verifiable evidence of what they offered.
 
 ## The problem
 
 UGC creators in Kenya often agree to brand work through WhatsApp, Instagram DMs, or verbal conversations. The price, usage rights, duration, and payment expectation are fragmented across private messages. If a brand goes silent or an intermediary withholds payment, the creator may have no durable record of the original offer.
 
-Creators also spend too much time waiting to be discovered. ContentPort gives them a way to make a specific, priced licensing offer first and share it directly with the intended brand.
+Creators also spend too much time waiting to be discovered. ANZA gives them a way to make a specific, priced licensing offer first and share it directly with the intended brand.
 
 ## The solution
 
-ContentPort turns a creator's offer into a shareable, signed record:
+ANZA turns a creator's offer into a shareable, signed record:
 
 1. A creator enters the content reference, target brand, price in sats, rights, and duration.
 2. The creator signs the offer in their browser using a Nostr signer extension.
-3. ContentPort verifies the signature, stores workflow state in PostgreSQL, and publishes the signed offer to configured Nostr relays.
+3. ANZA verifies the signature, stores workflow state in PostgreSQL, and publishes the signed offer to configured Nostr relays.
 4. The creator shares the public offer link with a brand.
 5. The brand receives a Lightning invoice for the exact offer amount and pays it directly to the Creator node.
-6. ContentPort checks the Lightning invoice settlement and updates the public payment state.
+6. ANZA checks the Lightning invoice settlement and updates the public payment state.
 
 ```mermaid
 flowchart LR
-    C[Creator] -->|Sets price & license terms| F[ContentPort offer form]
+    C[Creator] -->|Sets price & license terms| F[ANZA offer form]
     F -->|NIP-07 signature| A[Node.js API]
     A -->|Persist workflow state| P[(PostgreSQL)]
     A -->|Signed event| N[Nostr relays]
@@ -60,7 +60,7 @@ flowchart LR
 | Capability | Status | What it does |
 | --- | :---: | --- |
 | Creator offer form | ✅ | Captures title, description, public content URL, brand, sats price, rights, and duration. |
-| Browser-based Nostr signing | ✅ | Uses a NIP-07 browser signer so private keys stay out of ContentPort. |
+| Browser-based Nostr signing | ✅ | Uses a NIP-07 browser signer so private keys stay out of ANZA. |
 | Signed API authentication | ✅ | Binds authenticated creator requests to method, URL, body, and idempotency key. |
 | Nostr offer publication | ✅ | Verifies an offer event, queues it durably, and retries relay publication until acknowledged. |
 | Public offer link | ✅ | Lets a brand review the exact content reference, terms, price, and Nostr event ID. |
@@ -68,7 +68,7 @@ flowchart LR
 | Lightning invoice | ✅ | Creates a BOLT11 invoice from the offer's exact sats amount through a local Polar LND Creator node. |
 | Lightning settlement detection | ✅ | Looks up the invoice at LND and updates the UI only after LND reports settlement. |
 | Payment QR and status UI | ✅ | Shows the price, Lightning QR/invoice, pending state, and confirmed payment state. |
-| Signed Nostr license event after payment | ✅ | After verified Lightning settlement, ContentPort signs a linked license event, queues it for relay publication, and records the license after relay acknowledgement. |
+| Signed Nostr license event after payment | ✅ | After verified Lightning settlement, ANZA signs a linked license event, queues it for relay publication, and records the license after relay acknowledgement. |
 
 ## Why this matters
 
@@ -81,18 +81,18 @@ flowchart LR
 
 ## Verifiable offers
 
-ContentPort uses a configured experimental regular Nostr event kind for the current MVP. The offer event includes:
+ANZA uses a configured experimental regular Nostr event kind for the current MVP. The offer event includes:
 
 - Creator public key and cryptographic signature
 - Content reference and SHA-256 fingerprint
 - Brand, price in sats, usage rights, and duration
-- ContentPort settlement-attestor public key
-- Versioned event schema: `contentport.offer.v1`
+- ANZA settlement-attestor public key
+- Versioned event schema: `ANZA.offer.v1`
 
 The backend verifies the signed event before publication. It does not manufacture a creator signature or accept a changed offer after an event ID has been assigned.
 
 > [!NOTE]
-> Nostr proves that a key signed a specific event. It does not by itself prove a real-world identity, brand authority, legal enforceability, or permanent relay retention. ContentPort presents verifiable technical evidence; parties should still use terms appropriate to their agreement.
+> Nostr proves that a key signed a specific event. It does not by itself prove a real-world identity, brand authority, legal enforceability, or permanent relay retention. ANZA presents verifiable technical evidence; parties should still use terms appropriate to their agreement.
 
 ## Lightning demo
 
@@ -103,7 +103,7 @@ The repository supports a safe, local Lightning demonstration with [Polar](https
 
 1. Fund **Buyer** with regtest sats in Polar.
 2. Open and confirm a Lightning channel from **Buyer** to **Creator**.
-3. Create and publish a ContentPort offer.
+3. Create and publish a ANZA offer.
 4. Open its public link and select **Purchase License**.
 5. Copy the `lnbcrt...` invoice or scan its QR code from Buyer.
 6. Pay it from **Buyer → Payments**.
@@ -183,7 +183,7 @@ Create `backend/.env`. Never commit it.
 HOST=127.0.0.1
 PORT=3000
 PUBLIC_ORIGIN=http://localhost:3000
-DATABASE_URL=postgresql://contentport:change-me@localhost:5432/contentport
+DATABASE_URL=postgresql://ANZA:change-me@localhost:5432/ANZA
 
 # Development event configuration
 NOSTR_OFFER_KIND=9998
@@ -231,7 +231,7 @@ cd ../frontend && npm run build
 ## Repository layout
 
 ```text
-contentport/
+ANZA/
 ├── frontend/                 # Next.js creator and brand experience
 │   ├── app/                  # Create offer, public offer, and payment pages
 │   ├── components/           # UI, offer, layout, and payment components
