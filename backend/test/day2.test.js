@@ -199,10 +199,18 @@ test('relay rejection and missing acknowledgements fail; another relay can succe
 test('configuration rejects missing keys and insecure non-local relays', () => {
   const env = { DATABASE_URL: 'postgresql://localhost/test', NOSTR_OFFER_KIND: '9998', NOSTR_ATTESTOR_PUBKEY: attestorPubkey, NOSTR_RELAYS: 'ws://localhost:7777' };
   assert.equal(readConfig(env).kind, 9998);
+  assert.equal(readConfig(env).host, '127.0.0.1');
+  assert.equal(readConfig({ ...env, K_SERVICE: 'licensing-api', PORT: '8080' }).host, '0.0.0.0');
+  assert.equal(readConfig({ ...env, K_SERVICE: 'licensing-api', PORT: '8080' }).port, 8080);
+  assert.deepEqual(readConfig({ ...env, CORS_ORIGINS: 'https://brands.example, https://admin.example' }).corsOrigins,
+    ['https://brands.example', 'https://admin.example']);
+  assert.deepEqual(readConfig({ ...env, CORS_ORIGIN: 'http://localhost:3001' }).corsOrigins, ['http://localhost:3001']);
   assert.equal(readConfig({ ...env, NOSTR_ATTESTOR_PUBKEY: nip19.npubEncode(attestorPubkey) }).attestorPubkey, attestorPubkey);
 
   assert.throws(() => readConfig({ ...env, NOSTR_OFFER_KIND: '' }));
   assert.throws(() => readConfig({ ...env, NOSTR_RELAYS: 'ws://remote.example' }));
+  assert.throws(() => readConfig({ ...env, CORS_ORIGINS: 'https://brands.example/path' }));
+  assert.throws(() => readConfig({ ...env, CORS_ORIGINS: 'http://brands.example' }));
   assert.equal(matchOfferRoute('POST', '/api/offers').action, 'create');
   assert.equal(matchOfferRoute('POST', '/api/offers/abc/publish').action, 'publish');
 });
@@ -227,6 +235,56 @@ test('HTTP routing returns JSON, validates auth, and creates an offer', async ()
   assert.equal(created.body.creator_pubkey, pubkey);
   assert.equal((await inject(`/api/offers/${created.body.id}`, 'GET')).status, 404);
   assert.equal((await inject('/api/payments/test', 'GET')).status, 404);
+  app.close();
+});
+
+test('health checks separate liveness from database readiness and enforce exact CORS origins', async () => {
+  const { service } = setup();
+  let ready = false;
+  let readinessUnavailable = false;
+  const errors = [];
+  const app = createApp({ service, verifyEvent: () => true, origin: 'https://api.example',
+    corsOrigins: ['https://brands.example'],
+    readinessCheck: async () => {
+      if (readinessUnavailable) throw new Error('database unavailable');
+      return ready;
+    },
+    onError: error => errors.push(error) });
+  const inject = (url, method = 'GET', headers = {}) => new Promise(resolve => {
+    const request = Readable.from([]);
+    Object.assign(request, { url, method, headers });
+    let status;
+    const responseHeaders = {};
+    app.emit('request', request, {
+      setHeader(name, value) { responseHeaders[name] = value; },
+      writeHead(code) { status = code; },
+      end(body) { resolve({ status, headers: responseHeaders, body: body ? JSON.parse(body) : null }); }
+    });
+  });
+
+  const live = await inject('/health/live');
+  assert.equal(live.status, 200);
+  assert.deepEqual(live.body, { status: 'alive' });
+  assert.equal((await inject('/health/ready')).status, 503);
+  ready = true;
+  assert.equal((await inject('/health/ready')).status, 200);
+  readinessUnavailable = true;
+  const unavailable = await inject('/health/ready');
+  assert.equal(unavailable.status, 503);
+  assert.deepEqual(unavailable.body, { status: 'not_ready', error: 'Required dependencies are unavailable.' });
+  assert.equal(errors.length, 1);
+  assert.equal((await inject('/health/live')).status, 200);
+  const allowed = await inject('/health/live', 'GET', { origin: 'https://brands.example' });
+  assert.equal(allowed.headers['Access-Control-Allow-Origin'], 'https://brands.example');
+  const denied = await inject('/health/live', 'GET', { origin: 'https://attacker.example' });
+  assert.equal(denied.headers['Access-Control-Allow-Origin'], undefined);
+  assert.equal(denied.headers.Vary, 'Origin');
+  const preflight = await inject('/health/live', 'OPTIONS', { origin: 'https://brands.example' });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers['Access-Control-Allow-Origin'], 'https://brands.example');
+  const deniedPreflight = await inject('/health/live', 'OPTIONS', { origin: 'https://attacker.example' });
+  assert.equal(deniedPreflight.status, 204);
+  assert.equal(deniedPreflight.headers['Access-Control-Allow-Origin'], undefined);
   app.close();
 });
 
