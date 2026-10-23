@@ -6,6 +6,7 @@ import {
   OfferStatusResponse,
   OwnedVideo,
   PaymentRequestResponse,
+  PurchaseStatusResponse,
   UploadAuthorization,
   VideoRegistrationInput,
   VideoRecord,
@@ -27,12 +28,13 @@ type BackendOffer = {
   terms: {
     title?: string; description?: string; brand: string; content_url: string;
     content_sha256: string; amount_sats: number; usage_rights: string;
+    lightning_address?: string;
     duration: LicenseDuration;
   };
   status: "draft" | "publishing" | "published" | "licensed";
   event_id: string | null;
   video_id?: string;
-  payment?: { status?: "pending" | "settled"; settled_at?: number };
+  payment?: { status?: "pending" | "settled" | "attested"; settled_at?: number };
 };
 
 function idempotencyKey() { return crypto.randomUUID().replaceAll("-", ""); }
@@ -83,6 +85,7 @@ async function offerDraftFrom(payload: CreateOfferPayload) {
     title: payload.title.trim(), description: payload.description.trim(),
     brand: payload.brandName.trim(), amount_sats: payload.priceSats,
     usage_rights: payload.licenseDescription.trim(), duration: licenseDuration(payload),
+    lightning_address: payload.creatorLightningAddress.trim(),
   };
   if (payload.videoId) return { ...base, video_id: payload.videoId };
   const content_url = payload.contentUrl.trim();
@@ -92,8 +95,10 @@ function fromBackend(offer: BackendOffer): Offer {
   const type = licenseType(offer.terms.duration);
   return { offerId: offer.id, title: offer.terms.title || "Untitled Content", description: offer.terms.description || offer.terms.usage_rights,
     contentUrl: offer.terms.content_url, brandName: offer.terms.brand, priceSats: offer.terms.amount_sats,
+    creatorLightningAddress: offer.terms.lightning_address,
     licenseType: type, licenseDescription: offer.terms.usage_rights,
-    status: offer.status === "licensed" ? "LICENSED" : offer.payment?.status === "settled" ? "PAYMENT_SETTLED" : offer.payment?.status === "pending" ? "PAYMENT_PENDING" : "OPEN",
+    status: offer.status === "licensed" ? "LICENSED" : offer.payment?.status === "attested" ? "PAYMENT_ATTESTED"
+      : offer.payment?.status === "settled" ? "PAYMENT_SETTLED" : offer.payment?.status === "pending" ? "PAYMENT_PENDING" : "OPEN",
     nostrEventId: offer.event_id ?? "Pending relay acknowledgement",
     ...(offer.payment?.settled_at ? { paymentSettledAt: offer.payment.settled_at } : {}),
     creatorHandle: creatorHandle(offer.creator_pubkey) };
@@ -181,10 +186,38 @@ export async function getOffer(offerId: string): Promise<Offer> {
 export function getMyOffer(offerId: string): Promise<Offer> {
   return signedRequest<BackendOffer>("GET", `/offers/${offerId}`).then(fromBackend);
 }
+function purchaseCredentials(offerId: string) {
+  const key = `anza:purchase:${offerId}`;
+  const previous = sessionStorage.getItem(key);
+  if (previous) {
+    const value = JSON.parse(previous) as { idempotencyKey: string; accessToken: string };
+    if (/^[0-9a-f]{32}$/.test(value.idempotencyKey) && /^[0-9a-f]{64}$/.test(value.accessToken)) return value;
+  }
+  const value = {
+    idempotencyKey: crypto.randomUUID().replaceAll("-", ""),
+    accessToken: `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", ""),
+  };
+  sessionStorage.setItem(key, JSON.stringify(value));
+  return value;
+}
 export async function createPaymentRequest(offerId: string): Promise<PaymentRequestResponse> {
-  const response = await fetch(apiUrl(`/offers/${offerId}/payment`), { method: "POST", headers: { "Content-Type": "application/json" } });
+  const credentials = purchaseCredentials(offerId);
+  const response = await fetch(apiUrl(`/offers/${offerId}/payment`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": credentials.idempotencyKey,
+      "X-Purchase-Token": credentials.accessToken },
+    body: "{}",
+  });
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json() as Promise<PaymentRequestResponse>;
+}
+export async function getPurchaseStatus(purchaseId: string, offerId: string): Promise<PurchaseStatusResponse> {
+  const credentials = purchaseCredentials(offerId);
+  const response = await fetch(apiUrl(`/purchases/${purchaseId}/status`), {
+    headers: { "X-Purchase-Token": credentials.accessToken },
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json() as Promise<PurchaseStatusResponse>;
 }
 export async function getOfferStatus(offerId: string): Promise<OfferStatusResponse> {
   const response = await fetch(apiUrl(`/offers/${offerId}/status`));

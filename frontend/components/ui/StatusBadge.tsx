@@ -20,6 +20,11 @@ const CONFIG: Record<
     classes: "bg-success-bg text-success",
     icon: <CheckCircle size={14} />,
   },
+  PAYMENT_ATTESTED: {
+    label: "Creator receipt verified",
+    classes: "bg-success-bg text-success",
+    icon: <CheckCircle size={14} />,
+  },
   LICENSED: {
     label: "Licensed",
     classes: "bg-success-bg text-success",

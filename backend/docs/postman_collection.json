@@ -74,7 +74,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"brand\": \"Example Brand\",\n  \"content_url\": \"https://example.com/watermarked-preview.mp4\",\n  \"content_sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"amount_sats\": 25000,\n  \"usage_rights\": \"Non-exclusive organic social use; no paid advertising.\",\n  \"duration\": {\n    \"type\": \"fixed\",\n    \"days\": 30\n  }\n}",
+              "raw": "{\n  \"brand\": \"Example Brand\",\n  \"lightning_address\": \"creator@example.org\",\n  \"content_url\": \"https://example.com/watermarked-preview.mp4\",\n  \"content_sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"amount_sats\": 25000,\n  \"usage_rights\": \"Non-exclusive organic social use; no paid advertising.\",\n  \"duration\": {\n    \"type\": \"fixed\",\n    \"days\": 30\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -150,11 +150,11 @@
       ]
     },
     {
-      "name": "Development payment",
+      "name": "Payments",
       "item": [
         {
-          "name": "Request a local LND invoice for a published offer",
-          "description": "Development-only legacy route. It uses the single configured local LND node and does not route to a creator Lightning Address or independently prove creator-beneficiary settlement. Do not use as the production payment path.",
+          "name": "Create a purchase-specific Lightning invoice for a published offer",
+          "description": "Uses Polar/LND only for local development. Staging and production resolve the Lightning Address signed into the offer, construct a NIP-57 kind 9734 Zap request, and request an invoice directly from the creator’s LNURL-pay service. A receiver-signed kind 9735 receipt is the creator payment service’s attestation, not independent proof that funds moved. Brands do not need Anza accounts.",
           "request": {
             "method": "POST",
             "header": [
@@ -163,8 +163,28 @@
                 "value": "{{idempotencyKey}}",
                 "type": "text",
                 "disabled": false
+              },
+              {
+                "key": "X-Purchase-Token",
+                "value": "",
+                "type": "text",
+                "disabled": false
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
               }
             ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
             "url": {
               "raw": "{{baseUrl}}/api/offers/:id/payment",
               "variable": [
@@ -177,8 +197,37 @@
           }
         },
         {
+          "name": "Poll the purchase-specific NIP-57 receipt and license state",
+          "description": "The server retrieves kind 9735 receipts from the relays listed in the stored Zap request and validates them against the signed offer, creator receiver key, exact amount, invoice, and purchase. A matching receiver-signed receipt is an attestation from that creator payment service, not independent proof that funds moved. Missing or delayed receipts remain pending.",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Purchase-Token",
+                "value": "",
+                "type": "text",
+                "disabled": false
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/purchases/:id/status",
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{offerId}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Development payment",
+      "item": [
+        {
           "name": "Read current offer and local LND payment status",
-          "description": "Public legacy status endpoint. A client-visible status is not independent proof of funds movement.",
+          "description": "Local Polar/regtest legacy status endpoint. Staging and production use the purchase-specific NIP-57 status endpoint.",
           "request": {
             "method": "GET",
             "header": [],

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validate, buildOfferEvent, buildLicenseEvent, contract } from '../index.js';
-import { matchOfferRoute, matchWebhookRoute } from '../src/routes/offers.js';
+import { matchOfferRoute, matchPurchaseRoute, matchWebhookRoute } from '../src/routes/offers.js';
 import { matchVideoRoute } from '../src/routes/content.js';
 import { buildPostmanCollection } from '../src/contracts/postman.js';
 
@@ -109,6 +109,7 @@ test('OpenAPI paths and methods match every implemented API and health route onl
     ['POST', '/api/offers/offer_1/publish', '/api/offers/{id}/publish'],
     ['POST', '/api/offers/offer_1/payment', '/api/offers/{id}/payment'],
     ['GET', '/api/offers/offer_1/status', '/api/offers/{id}/status'],
+    ['GET', '/api/purchases/purchase_1/status', '/api/purchases/{id}/status'],
     ['POST', '/api/webhooks/lightning', '/api/webhooks/lightning'],
     ['POST', '/api/webhooks/speed/lightning', '/api/webhooks/speed/lightning'],
     ['GET', '/api/videos', '/api/videos'],
@@ -120,7 +121,7 @@ test('OpenAPI paths and methods match every implemented API and health route onl
   const documented = [];
   for (const [method, routePath, openApiPath] of routes) {
     if (!routePath.startsWith('/health/')) {
-      assert.ok(matchWebhookRoute(method, routePath) || matchOfferRoute(method, routePath) || matchVideoRoute(method, routePath),
+      assert.ok(matchWebhookRoute(method, routePath) || matchOfferRoute(method, routePath) || matchPurchaseRoute(method, routePath) || matchVideoRoute(method, routePath),
         `${method} ${routePath} must be routed by the API`);
     }
     assert.ok(contract.paths[openApiPath]?.[method.toLowerCase()], `${method} ${openApiPath} must appear in OpenAPI`);
@@ -132,5 +133,6 @@ test('OpenAPI paths and methods match every implemented API and health route onl
   assert.deepEqual(openApiMethods, documented.sort());
   assert.equal(contract.paths['/api/offers/{id}/payments'], undefined);
   assert.equal(contract.paths['/api/payments/{id}'], undefined);
-  assert.ok(contract.paths['/api/offers/{id}/payment'].post['x-availability'] === 'development-only');
+  assert.equal(contract.paths['/api/offers/{id}/payment'].post['x-availability'], undefined);
+  assert.equal(contract.paths['/api/offers/{id}/status'].get['x-availability'], 'development-only');
 });

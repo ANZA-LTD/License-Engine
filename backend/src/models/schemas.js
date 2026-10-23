@@ -17,6 +17,7 @@ schemas.Terms = {
     title: { ...text, maxLength: 200 },
     description: text,
     brand: { ...text, maxLength: 200 },
+    lightning_address: { type: 'string', minLength: 3, maxLength: 320, pattern: '^[^\\s@]+@[^\\s@]+$' },
     content_url: { type: 'string', pattern: '^https://[^\\s]+$', maxLength: 2048 },
     content_sha256: hex,
     amount_sats: positive,
@@ -54,7 +55,15 @@ schemas.SignedEvent = object({
 });
 schemas.PaymentStatus = object({ payment: schemas.Payment, license: nullable(schemas.License) });
 schemas.Error = object({ error: object({ code: text, message: text }) });
-schemas.Settlement = object({ offer_event_id: hex, payment_hash: hex, amount_sats: positive, settled_at: integer });
+schemas.Settlement = {
+  type: 'object',
+  properties: {
+    offer_event_id: hex, payment_hash: hex, amount_sats: positive, settled_at: integer,
+    purchase_id: id, receipt_event_id: hex, receiver_pubkey: hex, payment_network: enumeration('mainnet')
+  },
+  required: ['offer_event_id', 'payment_hash', 'amount_sats', 'settled_at'],
+  additionalProperties: false
+};
 // POST /offers accepts either the complete signed Terms, or the same terms
 // without a client-supplied content reference. The content layer fills
 // content_url and content_sha256 from the video record, so the browser is never
@@ -62,7 +71,7 @@ schemas.Settlement = object({ offer_event_id: hex, payment_hash: hex, amount_sat
 schemas.OfferDraft = {
   type: 'object',
   properties: { ...schemas.Terms.properties, video_id: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,100}$' } },
-  required: ['brand', 'amount_sats', 'usage_rights', 'duration'],
+  required: ['brand', 'lightning_address', 'amount_sats', 'usage_rights', 'duration'],
   additionalProperties: false
 };
 Object.assign(schemas, buildCommerceSchemas(schemas));
