@@ -82,7 +82,7 @@ export default function OfferPage({ params }: { params: { offerId: string } }) {
   }
 
   if (offer.status === "LICENSED") return <LicensedView offer={offer} />;
-  if (offer.status === "PAYMENT_SETTLED") return <PaymentConfirmedView offer={offer} />;
+  if (offer.status === "PAYMENT_ATTESTED" || offer.status === "PAYMENT_SETTLED") return <PaymentConfirmedView offer={offer} />;
   return <PublicOfferView offer={offer} />;
 }
 
@@ -150,13 +150,14 @@ function PublicOfferView({ offer }: { offer: Offer }) {
   );
 }
 
-/** Payment receipt — shown only after the backend confirms the LND settlement. */
+/** Payment evidence view — its wording follows the selected verification policy. */
 function PaymentConfirmedView({ offer }: { offer: Offer }) {
+  const zapReceiptVerified = offer.status === "PAYMENT_ATTESTED";
   const settledDate = offer.paymentSettledAt
     ? new Date(offer.paymentSettledAt * 1000).toLocaleString("en-US", {
         day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit"
       })
-    : "Confirmed by Lightning node";
+    : zapReceiptVerified ? "Receipt timestamp unavailable" : "Confirmed by Lightning node";
 
   return (
     <main>
@@ -164,11 +165,15 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
       <div className="mx-auto max-w-2xl px-6 py-12 text-center">
         <CheckCircle size={56} className="mx-auto text-success" />
         <p className="mt-4 text-sm font-semibold uppercase tracking-[0.18em] text-success">
-          Lightning settlement verified
+          {zapReceiptVerified ? "Creator receipt verified" : "Lightning settlement verified"}
         </p>
-        <h1 className="mt-2 text-3xl font-bold text-text-primary">Payment Confirmed</h1>
+        <h1 className="mt-2 text-3xl font-bold text-text-primary">
+          {zapReceiptVerified ? "Creator payment attested" : "Payment Confirmed"}
+        </h1>
         <p className="mt-2 text-sm text-text-secondary">
-          {offer.priceSats.toLocaleString()} sats has settled to the Creator node.
+          {zapReceiptVerified
+            ? `The creator's Lightning service signed a receipt for ${offer.priceSats.toLocaleString()} sats. This is the service's attestation, not independent proof that funds moved.`
+            : `${offer.priceSats.toLocaleString()} sats settled to the local Lightning node.`}
         </p>
 
         <Card className="mt-8 text-left">
@@ -186,11 +191,15 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
 
           <div className="mt-6 grid grid-cols-1 gap-4 border-t border-border pt-6 sm:grid-cols-2">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Amount settled</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                {zapReceiptVerified ? "Offer amount" : "Amount settled"}
+              </p>
               <p className="mt-1 text-lg font-bold text-text-primary">{offer.priceSats.toLocaleString()} sats</p>
             </div>
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Settlement time</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                {zapReceiptVerified ? "Receipt timestamp" : "Settlement time"}
+              </p>
               <p className="mt-1 text-sm font-medium text-text-primary">{settledDate}</p>
             </div>
           </div>
@@ -203,7 +212,9 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
         <div className="mt-6 rounded-xl border border-border bg-surface p-5 text-left">
           <p className="text-sm font-semibold text-text-primary">License record</p>
           <p className="mt-1 text-sm text-text-secondary">
-            Payment is confirmed. The linked Nostr license attestation will appear here when it is signed and published.
+            {zapReceiptVerified
+              ? "The creator service's signed receipt was accepted under ANZA's payment policy. The linked license attestation will appear here after relay publication."
+              : "The local Lightning node reported settlement. The linked Nostr license attestation will appear here when it is signed and published."}
           </p>
         </div>
       </div>

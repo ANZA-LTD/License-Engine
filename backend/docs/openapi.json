@@ -3,7 +3,7 @@
   "info": {
     "title": "ContentPort API",
     "version": "0.4.0",
-    "description": "Implemented offer, development payment, creator content, webhook and health routes. The current LND payment route is local/development only; it is not the approved production Lightning Address flow."
+    "description": "Implements creator offers, local Polar/regtest payments in development, and purchase-scoped LNURL-pay/NIP-57 receipts in staging and production. A receiver-signed Zap receipt is the creator payment service’s attestation, not independent proof that funds moved."
   },
   "servers": [
     {
@@ -64,6 +64,12 @@
             "minLength": 1,
             "maxLength": 200,
             "pattern": "\\S"
+          },
+          "lightning_address": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320,
+            "pattern": "^[^\\s@]+@[^\\s@]+$"
           },
           "content_url": {
             "type": "string",
@@ -151,6 +157,12 @@
             "maxLength": 200,
             "pattern": "\\S"
           },
+          "lightning_address": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320,
+            "pattern": "^[^\\s@]+@[^\\s@]+$"
+          },
           "content_url": {
             "type": "string",
             "pattern": "^https://[^\\s]+$",
@@ -212,6 +224,7 @@
         },
         "required": [
           "brand",
+          "lightning_address",
           "amount_sats",
           "usage_rights",
           "duration"
@@ -305,7 +318,8 @@
                 "type": "string",
                 "enum": [
                   "pending",
-                  "settled"
+                  "settled",
+                  "attested"
                 ]
               },
               "reference": {
@@ -408,6 +422,12 @@
           "content",
           "sig"
         ],
+        "additionalProperties": false
+      },
+      "EmptyObject": {
+        "type": "object",
+        "properties": {},
+        "required": [],
         "additionalProperties": false
       },
       "Discovery": {
@@ -1202,6 +1222,10 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,100}$"
           },
+          "purchaseId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,100}$"
+          },
           "amountSats": {
             "type": "integer",
             "minimum": 1,
@@ -1231,6 +1255,7 @@
             "enum": [
               "OPEN",
               "PAYMENT_PENDING",
+              "PAYMENT_ATTESTED",
               "PAYMENT_SETTLED",
               "LICENSED"
             ]
@@ -1253,6 +1278,46 @@
         "required": [
           "offerId",
           "status"
+        ],
+        "additionalProperties": false
+      },
+      "PurchaseStatus": {
+        "type": "object",
+        "properties": {
+          "purchaseId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,100}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PAYMENT_PENDING",
+              "PAYMENT_ATTESTED",
+              "LICENSED",
+              "EXPIRED"
+            ]
+          },
+          "receiptState": {
+            "type": "string",
+            "enum": [
+              "awaiting_receipt",
+              "verified"
+            ]
+          },
+          "licenseNostrEventId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "licensedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "purchaseId",
+          "status",
+          "receiptState"
         ],
         "additionalProperties": false
       },
@@ -1555,6 +1620,7 @@
               },
               "example": {
                 "brand": "Example Brand",
+                "lightning_address": "creator@example.org",
                 "content_url": "https://example.com/watermarked-preview.mp4",
                 "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "amount_sats": 25000,
@@ -2005,33 +2071,47 @@
       ],
       "post": {
         "tags": [
-          "Development payment"
+          "Payments"
         ],
-        "operationId": "createDevelopmentPayment",
-        "summary": "Request a local LND invoice for a published offer",
-        "description": "Development-only legacy route. It uses the single configured local LND node and does not route to a creator Lightning Address or independently prove creator-beneficiary settlement. Do not use as the production payment path.",
-        "x-availability": "development-only",
-        "security": [
-          {},
-          {
-            "nostrAuth": []
-          }
-        ],
+        "operationId": "createPaymentRequest",
+        "summary": "Create a purchase-specific Lightning invoice for a published offer",
+        "description": "Uses Polar/LND only for local development. Staging and production resolve the Lightning Address signed into the offer, construct a NIP-57 kind 9734 Zap request, and request an invoice directly from the creator’s LNURL-pay service. A receiver-signed kind 9735 receipt is the creator payment service’s attestation, not independent proof that funds moved. Brands do not need Anza accounts.",
+        "security": [],
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]{16,128}$"
+            }
+          },
+          {
+            "name": "X-Purchase-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
             },
-            "description": "Required only when optional Nostr authorization is supplied."
+            "description": "Random purchase capability. Keep it private and send it to the matching purchase status endpoint."
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyObject"
+              },
+              "example": {}
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Existing unexpired invoice returned",
+            "description": "Existing idempotent purchase invoice returned",
             "content": {
               "application/json": {
                 "schema": {
@@ -2041,7 +2121,7 @@
             }
           },
           "201": {
-            "description": "Invoice created",
+            "description": "Purchase and Lightning invoice created",
             "content": {
               "application/json": {
                 "schema": {
@@ -2171,7 +2251,7 @@
         ],
         "operationId": "getDevelopmentPaymentStatus",
         "summary": "Read current offer and local LND payment status",
-        "description": "Public legacy status endpoint. A client-visible status is not independent proof of funds movement.",
+        "description": "Local Polar/regtest legacy status endpoint. Staging and production use the purchase-specific NIP-57 status endpoint.",
         "x-availability": "development-only",
         "security": [
           {},
@@ -2186,6 +2266,150 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PaymentStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not permitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Use application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Feature or dependency not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Invalid provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/purchases/{id}/status": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,100}$"
+          }
+        },
+        {
+          "name": "X-Purchase-Token",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "description": "The purchase capability returned by the browser session when the invoice was created."
+        }
+      ],
+      "get": {
+        "tags": [
+          "Payments"
+        ],
+        "operationId": "getPurchaseStatus",
+        "summary": "Poll the purchase-specific NIP-57 receipt and license state",
+        "description": "The server retrieves kind 9735 receipts from the relays listed in the stored Zap request and validates them against the signed offer, creator receiver key, exact amount, invoice, and purchase. A matching receiver-signed receipt is an attestation from that creator payment service, not independent proof that funds moved. Missing or delayed receipts remain pending.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Purchase receipt and license state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseStatus"
                 }
               }
             }

@@ -8,6 +8,7 @@ import { createContentService } from './services/content/service.js';
 import { createCloudinary } from './services/media/cloudinary.js';
 import { createRelayPublisher } from './services/nostr/publisher.js';
 import { createLndClient } from './services/payments/lnd-client.js';
+import { createZapPaymentProvider } from './services/payments/zap-provider.js';
 import { createApp } from './app.js';
 
 // Load local development settings when present; platform-injected environment variables work without a file.
@@ -19,11 +20,14 @@ const pool = new pg.Pool({ connectionString: config.databaseUrl, connectionTimeo
 const store = new PostgresContentStore(pool);
 const checkDatabaseReadiness = async () => {
   // LIMIT 0 checks that every required table exists without reading customer data.
-  await pool.query('SELECT 1 FROM offers, api_requests, nostr_outbox, lightning_webhooks, videos, upload_sessions LIMIT 0');
+  await pool.query('SELECT 1 FROM offers, api_requests, nostr_outbox, lightning_webhooks, videos, upload_sessions, zap_purchases LIMIT 0');
   return true;
 };
-const paymentProvider = createLndClient({ restUrl: config.lndRestUrl, macaroon: config.lndMacaroon });
-const service = createOfferService({ store, verifyEvent, paymentProvider, ...config });
+const paymentProvider = config.paymentImplementation === 'polar-lnd'
+  ? createLndClient({ restUrl: config.lndRestUrl, macaroon: config.lndMacaroon }) : null;
+const zapPaymentProvider = config.paymentImplementation === 'lnurl-zap'
+  ? createZapPaymentProvider({ network: config.paymentNetwork, relays: config.relays }) : null;
+const service = createOfferService({ store, verifyEvent, paymentProvider, zapPaymentProvider, ...config });
 const contentService = createContentService({ store, cloudinary: createCloudinary(config.cloudinary) });
 const publish = createRelayPublisher({ relays: config.relays });
 const server = createApp({ service, contentService, verifyEvent, origin: config.origin, corsOrigins: config.corsOrigins,

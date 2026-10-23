@@ -29,7 +29,7 @@ const errors = Object.fromEntries([
 
 const paymentProgress = object({
   provider: { type: 'string' }, invoice_id: { type: 'string' }, payment_hash: hex,
-  request: { type: 'string' }, amount_sats: positive, status: { type: 'string', enum: ['pending', 'settled'] },
+  request: { type: 'string' }, amount_sats: positive, status: { type: 'string', enum: ['pending', 'settled', 'attested'] },
   reference: { type: 'string' }, expires_at: { anyOf: [{ type: 'string' }, integer] },
   settled_at: integer
 }, ['provider', 'invoice_id', 'payment_hash', 'request', 'amount_sats', 'status', 'reference']);
@@ -49,11 +49,17 @@ const offerDraft = {
 };
 
 const paymentRequestResponse = object({
-  offerId: id, amountSats: positive, paymentRequest: { type: 'string', minLength: 1 }
-});
+  offerId: id, purchaseId: id, amountSats: positive, paymentRequest: { type: 'string', minLength: 1 }
+}, ['offerId', 'amountSats', 'paymentRequest']);
+const purchaseStatusResponse = object({
+  purchaseId: id,
+  status: { type: 'string', enum: ['PAYMENT_PENDING', 'PAYMENT_ATTESTED', 'LICENSED', 'EXPIRED'] },
+  receiptState: { type: 'string', enum: ['awaiting_receipt', 'verified'] },
+  licenseNostrEventId: hex, licensedAt: integer
+}, ['purchaseId', 'status', 'receiptState']);
 const paymentStatusResponse = object({
   offerId: id,
-  status: { type: 'string', enum: ['OPEN', 'PAYMENT_PENDING', 'PAYMENT_SETTLED', 'LICENSED'] },
+  status: { type: 'string', enum: ['OPEN', 'PAYMENT_PENDING', 'PAYMENT_ATTESTED', 'PAYMENT_SETTLED', 'LICENSED'] },
   paymentSettledAt: integer, licensedAt: integer, licenseNostrEventId: hex
 }, ['offerId', 'status']);
 const webhookResponse = object({
@@ -66,6 +72,7 @@ const healthNotReady = object({ status: { const: 'not_ready' }, error: { type: '
 
 const createOfferExample = {
   brand: 'Example Brand',
+  lightning_address: 'creator@example.org',
   content_url: 'https://example.com/watermarked-preview.mp4',
   content_sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   amount_sats: 25000,
@@ -85,7 +92,7 @@ export const contract = {
   info: {
     title: 'ContentPort API',
     version: '0.4.0',
-    description: 'Implemented offer, development payment, creator content, webhook and health routes. The current LND payment route is local/development only; it is not the approved production Lightning Address flow.'
+    description: 'Implements creator offers, local Polar/regtest payments in development, and purchase-scoped LNURL-pay/NIP-57 receipts in staging and production. A receiver-signed Zap receipt is the creator payment service’s attestation, not independent proof that funds moved.'
   },
   servers: [{ url: '/', description: 'Same origin as the API server; paths include /api where applicable.' }],
   components: {
@@ -95,6 +102,7 @@ export const contract = {
       OfferDraft: offerDraft,
       Offer: offerResponse,
       SignedEvent: schemas.SignedEvent,
+      EmptyObject: object({}),
       Discovery: schemas.Discovery,
       VideoRegistration: schemas.VideoRegistration,
       OwnedVideo: schemas.OwnedVideo,
@@ -103,6 +111,7 @@ export const contract = {
       DeletedVideo: schemas.DeletedVideo,
       PaymentRequest: paymentRequestResponse,
       PaymentStatus: paymentStatusResponse,
+      PurchaseStatus: purchaseStatusResponse,
       WebhookReceipt: webhookResponse,
       HealthAlive: healthAlive,
       HealthReady: healthReady,
@@ -165,15 +174,20 @@ export const contract = {
     '/api/offers/{id}/payment': {
       parameters: [pathId],
       post: {
-        tags: ['Development payment'], operationId: 'createDevelopmentPayment',
-        summary: 'Request a local LND invoice for a published offer',
-        description: 'Development-only legacy route. It uses the single configured local LND node and does not route to a creator Lightning Address or independently prove creator-beneficiary settlement. Do not use as the production payment path.',
-        'x-availability': 'development-only',
-        security: optionalAuth, parameters: [optionalIdempotencyKey],
+        tags: ['Payments'], operationId: 'createPaymentRequest',
+        summary: 'Create a purchase-specific Lightning invoice for a published offer',
+        description: 'Uses Polar/LND only for local development. Staging and production resolve the Lightning Address signed into the offer, construct a NIP-57 kind 9734 Zap request, and request an invoice directly from the creator’s LNURL-pay service. A receiver-signed kind 9735 receipt is the creator payment service’s attestation, not independent proof that funds moved. Brands do not need Anza accounts.',
+        security: [],
+        parameters: [
+          idempotencyKey,
+          { name: 'X-Purchase-Token', in: 'header', required: true, schema: hex,
+            description: 'Random purchase capability. Keep it private and send it to the matching purchase status endpoint.' }
+        ],
+        requestBody: request('EmptyObject', {}),
         responses: {
           ...errors,
-          '200': response('Existing unexpired invoice returned', 'PaymentRequest'),
-          '201': response('Invoice created', 'PaymentRequest')
+          '200': response('Existing idempotent purchase invoice returned', 'PaymentRequest'),
+          '201': response('Purchase and Lightning invoice created', 'PaymentRequest')
         }
       }
     },
@@ -182,9 +196,21 @@ export const contract = {
       get: {
         tags: ['Development payment'], operationId: 'getDevelopmentPaymentStatus',
         summary: 'Read current offer and local LND payment status',
-        description: 'Public legacy status endpoint. A client-visible status is not independent proof of funds movement.',
+        description: 'Local Polar/regtest legacy status endpoint. Staging and production use the purchase-specific NIP-57 status endpoint.',
         'x-availability': 'development-only',
         security: optionalAuth, responses: { ...errors, '200': response('Current payment and license publication summary', 'PaymentStatus') }
+      }
+    },
+    '/api/purchases/{id}/status': {
+      parameters: [pathId, {
+        name: 'X-Purchase-Token', in: 'header', required: true, schema: hex,
+        description: 'The purchase capability returned by the browser session when the invoice was created.'
+      }],
+      get: {
+        tags: ['Payments'], operationId: 'getPurchaseStatus',
+        summary: 'Poll the purchase-specific NIP-57 receipt and license state',
+        description: 'The server retrieves kind 9735 receipts from the relays listed in the stored Zap request and validates them against the signed offer, creator receiver key, exact amount, invoice, and purchase. A matching receiver-signed receipt is an attestation from that creator payment service, not independent proof that funds moved. Missing or delayed receipts remain pending.',
+        security: [], responses: { ...errors, '200': response('Purchase receipt and license state', 'PurchaseStatus') }
       }
     },
     '/api/webhooks/lightning': {

@@ -10,7 +10,7 @@
 
 export type LicenseType = "30_DAY_SOCIAL" | "90_DAY_COMMERCIAL" | "PERPETUAL";
 
-export type OfferStatus = "OPEN" | "PAYMENT_PENDING" | "PAYMENT_SETTLED" | "LICENSED";
+export type OfferStatus = "OPEN" | "PAYMENT_PENDING" | "PAYMENT_ATTESTED" | "PAYMENT_SETTLED" | "LICENSED";
 
 /** Full offer record — response shape of GET /api/offers/:offerId */
 export interface Offer {
@@ -20,6 +20,7 @@ export interface Offer {
   contentUrl: string;
   brandName: string;
   priceSats: number;
+  creatorLightningAddress?: string;
   licenseType: LicenseType;
   licenseDescription: string;
   status: OfferStatus;
@@ -40,6 +41,7 @@ export interface CreateOfferPayload {
   contentUrl: string;
   brandName: string;
   priceSats: number;
+  creatorLightningAddress: string;
   licenseType: LicenseType;
   licenseDescription: string;
   /**
@@ -61,6 +63,7 @@ export interface CreateOfferResponse {
 /** Response of POST /api/offers/:offerId/payment */
 export interface PaymentRequestResponse {
   offerId: string;
+  purchaseId?: string;
   amountSats: number;
   paymentRequest: string; // the raw "lnbc..." Lightning invoice string
 }
@@ -72,6 +75,14 @@ export interface OfferStatusResponse {
   licenseNostrEventId?: string;
   licensedAt?: string;
   paymentSettledAt?: number;
+}
+
+export interface PurchaseStatusResponse {
+  purchaseId: string;
+  status: "PAYMENT_PENDING" | "PAYMENT_ATTESTED" | "LICENSED" | "EXPIRED";
+  receiptState: "awaiting_receipt" | "temporarily_unavailable" | "verified";
+  licenseNostrEventId?: string;
+  licensedAt?: number;
 }
 
 // ---------------------------------------------------------------------------

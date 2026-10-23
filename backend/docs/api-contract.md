@@ -6,10 +6,8 @@ The OpenAPI document is [openapi.json](openapi.json), generated from
 regenerates both files. Interactive Swagger UI is served at `/docs/` and reads
 the same OpenAPI document.
 
-The contract describes routes that currently exist. It does not claim the
-planned plural `/api/offers/{id}/payments` or `/api/payments/{id}` routes exist.
-The singular offer payment/status routes are a local LND development path,
-not the selected production Lightning Address model.
+The contract describes routes that currently exist. Purchases are account-free
+and have a purchase-specific status capability; no brand account is created.
 
 ## Access and authentication
 
@@ -21,8 +19,9 @@ not the selected production Lightning Address model.
 | `POST /api/offers` | Creator | Nostr HTTP authorization and `Idempotency-Key` required |
 | `GET /api/offers/{id}` | Public or owning creator | Unpublished offers return `404` unless read by their creator |
 | `POST /api/offers/{id}/publish` | Creator | Nostr authorization and `Idempotency-Key` required |
-| `POST /api/offers/{id}/payment` | Public | Development-only local LND invoice route; do not use for production |
-| `GET /api/offers/{id}/status` | Public | Development-only status polling; client output is not independent payment proof |
+| `POST /api/offers/{id}/payment` | Public | Idempotent purchase initiation; requires `Idempotency-Key` and `X-Purchase-Token` |
+| `GET /api/purchases/{id}/status` | Purchase capability | Requires the matching `X-Purchase-Token`; polls the NIP-57 receipt and license state |
+| `GET /api/offers/{id}/status` | Public | Local Polar/regtest development status only |
 | `POST /api/webhooks/lightning` | Signed provider callback | Currently unavailable: the runtime does not load a Speed webhook secret |
 | `POST /api/webhooks/speed/lightning` | Signed provider callback | Legacy alias; currently unavailable for the same missing-secret configuration |
 | `GET /api/videos` | Creator | Returns only the authenticated creator's library |
@@ -59,6 +58,7 @@ For a direct media reference, include `content_url` and `content_sha256`:
 ```json
 {
   "brand": "Example Brand",
+  "lightning_address": "creator@wallet.example",
   "content_url": "https://example.com/watermarked-preview.mp4",
   "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "amount_sats": 25000,
@@ -73,15 +73,33 @@ client-supplied media reference fields are ignored for video-backed offers.
 The creator signs the resulting offer before submitting it to the publish
 route.
 
-## Current development payment limitation
+## Payment environment and trust boundary
 
-The current singular `/payment` route requests an invoice from the single
-configured local LND node; `/status` polls that same node. Neither route
-resolves a creator Lightning Address, binds an independent recipient account,
-nor accepts buyer preimage evidence. A public status response or Anza
-attestor signature must not be described as independent proof that funds moved.
-The intended LNURL-pay production flow remains gated on the settlement and
-wallet-compatibility proof of concept.
+Local development uses the existing Polar/regtest LND adapter and its existing
+regression tests. Staging and production select the LNURL-pay/NIP-57 adapter
+and require Bitcoin mainnet configuration; the application fails startup for
+an inconsistent environment/network pair and does not silently fall back to
+Polar. Mainnet payment enablement remains an explicit runtime setting.
+
+For mainnet, the creator Lightning Address is included in the creator-signed
+offer. Anza resolves it over HTTPS, snapshots the receiver `nostrPubkey` and
+endpoint against a purchase, signs a purchase-scoped kind 9734 request, and
+validates the returned BOLT11 invoice against network, exact amount, signature,
+payment hash, expiry, and request description hash. It polls the relays named
+by that Zap request for kind 9735 receipts and checks the receiver signature,
+invoice, recipient, amount, request, and offer association. The buyer's wallet
+does not need to send Anza a preimage.
+
+A valid kind 9735 receipt signed by the receiver key is treated as the creator
+payment service's attestation under the approved policy. The receipt signature
+is **not independent proof that funds moved**; a matching preimage, if present,
+also does not independently prove settlement. Missing or delayed receipts stay
+pending and cannot issue a license. Lightning Address checks in staging and
+production are manual-only, exactly 1 sat, and require separate explicit
+approval for that environment. Automated tests never pay mainnet invoices.
+
+Creators receive payments directly through their Lightning service. Anza does
+not hold creator funds, maintain balances, or operate a payout service.
 
 ## Errors
 

@@ -2,7 +2,7 @@
   Payment page (dynamic)
   Handles creating a Lightning invoice and polling for payment status.
   This page must not assume payment success — it only reflects backend
-  state returned from the `getOfferStatus` endpoint.
+  state returned by the backend's purchase-specific payment status endpoint.
 */
 "use client";
 
@@ -14,7 +14,7 @@ import { ContentPreview } from "@/components/offer/ContentPreview";
 import { LightningQR } from "@/components/payment/LightningQR";
 import { InvoiceDisplay } from "@/components/payment/InvoiceDisplay";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
-import { createPaymentRequest, getOffer, getOfferStatus } from "@/lib/api";
+import { createPaymentRequest, getOffer, getOfferStatus, getPurchaseStatus } from "@/lib/api";
 import { Offer, PaymentRequestResponse } from "@/lib/types";
 import { LICENSE_TYPE_LABELS } from "@/lib/licenseTypes";
 
@@ -28,8 +28,8 @@ const POLL_INTERVAL_MS = Number(
  * Flow:
  *   1. On mount: load the offer (for the summary panel) and request a
  *      Lightning invoice via POST /api/offers/:offerId/payment.
- *   2. Once an invoice exists, poll GET /api/offers/:offerId/status on an
- *      interval until it reports a settled payment.
+ *   2. Poll the purchase-specific status endpoint for NIP-57 payments. Local
+ *      Polar development keeps its existing offer-scoped status endpoint.
  *
  * IMPORTANT (spec section 16/17): this page must NEVER show "payment
  * received" on its own — that state is only set from the polled backend
@@ -46,6 +46,7 @@ export default function PaymentPage({
   const [payment, setPayment] = useState<PaymentRequestResponse | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Step 1: load offer summary + create the Lightning invoice.
@@ -79,13 +80,17 @@ export default function PaymentPage({
 
     pollRef.current = setInterval(async () => {
       try {
-        const status = await getOfferStatus(params.offerId);
-        if (status.status === "LICENSED" || status.status === "PAYMENT_SETTLED") {
+        const status = payment.purchaseId
+          ? await getPurchaseStatus(payment.purchaseId, params.offerId)
+          : await getOfferStatus(params.offerId);
+        setPollError(null);
+        if (status.status === "LICENSED" || status.status === "PAYMENT_ATTESTED" || status.status === "PAYMENT_SETTLED") {
           setConfirmed(true);
           if (pollRef.current) clearInterval(pollRef.current);
         }
-      } catch {
-        // A transient poll failure isn't fatal — just try again next tick.
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "The receipt status check is temporarily unavailable.";
+        setPollError(message);
       }
     }, POLL_INTERVAL_MS);
 
@@ -183,7 +188,7 @@ export default function PaymentPage({
                       We verify
                     </p>
                     <p className="text-sm text-text-secondary">
-                      Payment is confirmed on the Lightning network.
+                      The backend verifies the creator service's signed Zap receipt; that signature is not independent proof of settlement.
                     </p>
                   </div>
                 </li>
@@ -226,7 +231,13 @@ export default function PaymentPage({
             </div>
 
             <div className="mt-6">
-              <PaymentStatus confirmed={confirmed} offerId={offer.offerId} />
+              {pollError && (
+                <p role="alert" className="mb-3 rounded-lg bg-surface p-3 text-sm text-text-secondary">
+                  Receipt status is temporarily unavailable: {pollError} The purchase remains pending until the backend verifies a valid receipt.
+                </p>
+              )}
+              <PaymentStatus confirmed={confirmed} offerId={offer.offerId}
+                zapReceiptVerified={Boolean(payment.purchaseId)} />
             </div>
           </Card>
         </div>

@@ -27,7 +27,7 @@ test('PostgreSQL transactions, idempotency, outbox retry and acknowledgement', a
   const { default: pg } = await import('pg');
   pgModule = pg;
   await withSchema(async pool => {
-    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 2 });
+    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 4 });
     const store = new PostgresOfferStore(pool);
     const offer = { id: 'offer_test', creator_pubkey: 'a'.repeat(64), terms: {}, status: 'draft', event_id: null, created_at: 1000 };
     const work = async tx => { await tx.insertOffer(offer); return { status: 201, body: offer }; };
@@ -61,14 +61,67 @@ test('migration runner upgrades an existing schema, preserves rows, and rejects 
     }
     await pool.query('INSERT INTO offers(id, document) VALUES ($1, $2)', ['existing_offer', { status: 'published' }]);
 
-    assert.deepEqual(await applyMigrations(pool), { applied: 2, skipped: 0 });
-    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 2 });
+    assert.deepEqual(await applyMigrations(pool), { applied: 4, skipped: 0 });
+    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 4 });
     assert.deepEqual((await pool.query('SELECT document FROM offers WHERE id = $1', ['existing_offer'])).rows[0].document,
       { status: 'published' });
 
     await pool.query("UPDATE backend_schema_migrations SET checksum = repeat('0', 64) WHERE name = '001_offers.sql'");
     await assert.rejects(applyMigrations(pool), /changed after it was recorded/);
   }, { initializeMigrations: false });
+});
+
+test('Zap purchase reservation and license issuance are transactionally idempotent', async t => {
+  if (!process.env.TEST_DATABASE_URL) { t.skip('Set TEST_DATABASE_URL to a disposable PostgreSQL database'); return; }
+  if (!pgModule) { const { default: pg } = await import('pg'); pgModule = pg; }
+  await withSchema(async pool => {
+    const store = new PostgresOfferStore(pool);
+    const offer = {
+      id: 'offer_zap', creator_pubkey: 'a'.repeat(64),
+      terms: { lightning_address: 'creator@example.org', amount_sats: 1 },
+      status: 'published', event_id: 'b'.repeat(64), created_at: 1000
+    };
+    await pool.query('INSERT INTO offers(id, document, event_id) VALUES ($1, $2, $3)',
+      [offer.id, offer, offer.event_id]);
+    await pool.query('INSERT INTO nostr_outbox(event_id, offer_id, event) VALUES ($1, $2, $3)',
+      [offer.event_id, offer.id, { ...offer, kind: 9998 }]);
+    const purchase = {
+      id: 'purchase_zap', offer_id: offer.id, offer_event_id: offer.event_id,
+      creator_pubkey: offer.creator_pubkey, lightning_address: offer.terms.lightning_address,
+      amount_sats: 1, amount_msat: 1000, network: 'mainnet',
+      idempotency_hash: 'c'.repeat(64), access_token_hash: 'd'.repeat(64)
+    };
+    const first = await store.reserveZapPurchase({ purchase, now: 1000 });
+    assert.equal(first.shouldCreate, true);
+    const replay = await store.reserveZapPurchase({ purchase: { ...purchase, id: 'different_id' }, now: 1001 });
+    assert.equal(replay.shouldCreate, false);
+    assert.equal(replay.purchase.id, purchase.id);
+    await assert.rejects(store.reserveZapPurchase({
+      purchase: { ...purchase, id: 'other_purchase', idempotency_hash: 'e'.repeat(64) }, now: 1001
+    }), { status: 409 });
+
+    const zapRequest = { id: 'f'.repeat(64), kind: 9734, tags: [] };
+    await store.setZapRequest(purchase.id, {
+      receiverPubkey: '9'.repeat(64), callbackUrl: 'https://creator.example/callback',
+      minSendable: 1, maxSendable: 100000, zapRequestId: zapRequest.id,
+      zapRequestJson: JSON.stringify(zapRequest), zapRequest
+    });
+    await store.saveZapInvoice(purchase.id, {
+      request: 'lnbc10n1invoice', payment_hash: '1'.repeat(64), payee_pubkey: '2'.repeat(66),
+      timestamp: 1000, expires_at: 4600
+    });
+    const receipt = { id: '3'.repeat(64), kind: 9735, tags: [] };
+    const license = { id: '4'.repeat(64), kind: 9998, content: '{}' };
+    assert.equal(await store.verifyZapPurchase({
+      purchaseId: purchase.id, receiptEvent: receipt, settledAt: 1050, licenseEvent: license
+    }), true);
+    assert.equal(await store.verifyZapPurchase({
+      purchaseId: purchase.id, receiptEvent: receipt, settledAt: 1050, licenseEvent: license
+    }), false);
+    assert.equal((await store.getZapPurchase(purchase.id)).status, 'verified');
+    assert.equal((await store.getOffer(offer.id)).payment.status, 'attested');
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM nostr_outbox')).rows[0].count, 2);
+  });
 });
 
 test('content layer persists ownership in the database and filters discovery by offer state', async t => {

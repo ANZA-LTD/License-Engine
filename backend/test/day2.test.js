@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createHmac } from 'node:crypto';
 import { nip19 } from 'nostr-tools';
+import { getPublicKey } from 'nostr-tools/pure';
 import { createOfferService } from '../src/services/offers/service.js';
 import { buildOfferEvent } from '../src/services/nostr/events.js';
 import { createRelayPublisher } from '../src/services/nostr/publisher.js';
@@ -15,7 +16,7 @@ import { createApp } from '../src/app.js';
 
 const pubkey = 'a'.repeat(64);
 const attestorPubkey = 'b'.repeat(64);
-const terms = { brand: 'Example', content_url: 'https://example.com/video', content_sha256: 'c'.repeat(64),
+const terms = { brand: 'Example', lightning_address: 'creator@example.org', content_url: 'https://example.com/video', content_sha256: 'c'.repeat(64),
   amount_sats: 500, usage_rights: 'Organic social use only', duration: { type: 'fixed', days: 30 } };
 const event = () => ({ ...buildOfferEvent({ kind: 9998, creatorPubkey: pubkey, attestorPubkey, terms, createdAt: 1000 }),
   id: 'd'.repeat(64), sig: 'e'.repeat(128) });
@@ -120,8 +121,16 @@ test('draft reads require the owner; published offers are public', async () => {
   await assert.rejects(service.get(body.id), { status: 404 });
   await assert.rejects(service.get(body.id, attestorPubkey), { status: 404 });
   assert.equal((await service.get(body.id, pubkey)).status, 200);
-  offers.set(body.id, { ...body, status: 'published' });
-  assert.equal((await service.get(body.id)).status, 200);
+  offers.set(body.id, { ...body, status: 'published', payment: {
+    provider: 'nostr-zap', invoice_id: 'private-invoice-id', payment_hash: 'f'.repeat(64),
+    request: 'private-bolt11-invoice', amount_sats: 500, status: 'attested',
+    reference: 'private-purchase-id', settled_at: 1000
+  } });
+  const publicOffer = await service.get(body.id);
+  assert.equal(publicOffer.status, 200);
+  assert.deepEqual(publicOffer.body.payment, { status: 'attested', settled_at: 1000 });
+  const creatorOffer = await service.get(body.id, pubkey);
+  assert.equal(creatorOffer.body.payment.request, 'private-bolt11-invoice');
 });
 test('publishing queues the signed event exactly once and does not claim relay success', async () => {
   const { service, outbox } = setup();
@@ -203,6 +212,10 @@ test('configuration rejects missing keys and insecure non-local relays', () => {
   const env = { DATABASE_URL: 'postgresql://localhost/test', NOSTR_OFFER_KIND: '9998', NOSTR_ATTESTOR_PUBKEY: attestorPubkey, NOSTR_RELAYS: 'ws://localhost:7777' };
   assert.equal(readConfig(env).kind, 9998);
   assert.equal(readConfig(env).host, '127.0.0.1');
+  assert.equal(readConfig(env).appEnv, 'development');
+  assert.equal(readConfig(env).paymentNetwork, 'regtest');
+  assert.equal(readConfig(env).paymentImplementation, 'polar-lnd');
+  assert.equal(readConfig(env).paymentEnabled, true);
   assert.equal(readConfig({ ...env, K_SERVICE: 'licensing-api', PORT: '8080' }).host, '0.0.0.0');
   assert.equal(readConfig({ ...env, K_SERVICE: 'licensing-api', PORT: '8080' }).port, 8080);
   assert.deepEqual(readConfig({ ...env, CORS_ORIGINS: 'https://brands.example, https://admin.example' }).corsOrigins,
@@ -214,8 +227,22 @@ test('configuration rejects missing keys and insecure non-local relays', () => {
   assert.throws(() => readConfig({ ...env, NOSTR_RELAYS: 'ws://remote.example' }));
   assert.throws(() => readConfig({ ...env, CORS_ORIGINS: 'https://brands.example/path' }));
   assert.throws(() => readConfig({ ...env, CORS_ORIGINS: 'http://brands.example' }));
-  assert.throws(() => readConfig({ ...env, NODE_ENV: 'production' }), /Production requires/);
-  const productionDocs = readConfig({ ...env, NODE_ENV: 'production', SWAGGER_UI_USERNAME: 'docs',
+  const stagingSecret = Buffer.from('11'.repeat(32), 'hex');
+  const stagingPubkey = getPublicKey(stagingSecret);
+  const mainnetEnv = { ...env, NODE_ENV: 'production', APP_ENV: 'staging', PAYMENT_NETWORK: 'mainnet',
+    PUBLIC_ORIGIN: 'https://api.example', NOSTR_RELAYS: 'wss://relay.example',
+    NOSTR_ATTESTOR_PUBKEY: stagingPubkey, NOSTR_ATTESTOR_PRIVATE_KEY: nip19.nsecEncode(stagingSecret),
+    SWAGGER_UI_USERNAME: 'docs', SWAGGER_UI_PASSWORD: 'random-local-test-password-12345' };
+  assert.equal(readConfig(mainnetEnv).paymentEnabled, false);
+  assert.equal(readConfig(mainnetEnv).paymentImplementation, 'lnurl-zap');
+  assert.throws(() => readConfig({ ...mainnetEnv,
+    NOSTR_RELAYS: Array.from({ length: 11 }, (_, index) => `wss://relay${index}.example`).join(',') }), /at most 10 relays/);
+  assert.equal(readConfig({ ...mainnetEnv, PAYMENT_ENABLED: 'true' }).paymentEnabled, true);
+  assert.throws(() => readConfig({ ...env, NODE_ENV: 'production' }), /PAYMENT_NETWORK=mainnet/);
+  assert.throws(() => readConfig({ ...mainnetEnv, PAYMENT_NETWORK: 'regtest' }), /PAYMENT_NETWORK=mainnet/);
+  assert.throws(() => readConfig({ ...mainnetEnv, LND_MACAROON: 'polar-secret' }), /must not configure Polar/);
+  assert.throws(() => readConfig({ ...mainnetEnv, NOSTR_ATTESTOR_PRIVATE_KEY: undefined }), /requires an unlocked/);
+  const productionDocs = readConfig({ ...mainnetEnv, APP_ENV: 'production', SWAGGER_UI_USERNAME: 'docs',
     SWAGGER_UI_PASSWORD: 'random-local-test-password-12345' }).docsAuth;
   assert.equal(productionDocs.readOnly, true);
   assert.throws(() => readConfig({ ...env, SWAGGER_UI_USERNAME: 'docs', SWAGGER_UI_PASSWORD: 'short' }), /at least 32 and at most 256/);

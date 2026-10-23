@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { authenticate, sha256 } from './middleware/auth.js';
-import { matchOfferRoute, matchWebhookRoute } from './routes/offers.js';
+import { matchOfferRoute, matchPurchaseRoute, matchWebhookRoute } from './routes/offers.js';
 import { matchVideoRoute } from './routes/content.js';
 import { createOfferController } from './controllers/offers.js';
 import { createContentController } from './controllers/content.js';
@@ -94,7 +94,7 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
     if (requestOrigin && corsOrigins.includes(requestOrigin)) {
       response.setHeader('Access-Control-Allow-Origin', requestOrigin);
       response.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-      response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Idempotency-Key');
+      response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Idempotency-Key, X-Purchase-Token');
       response.setHeader('Access-Control-Max-Age', '600');
     }
 
@@ -137,6 +137,7 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
         return;
       }
       const route = matchWebhookRoute(request.method, url.pathname) || matchOfferRoute(request.method, url.pathname)
+        || matchPurchaseRoute(request.method, url.pathname)
         || matchVideoRoute(request.method, url.pathname);
       if (!route) throw new HttpError(404, 'NOT_FOUND', 'Endpoint not found.');
       const chunks = [];
@@ -159,7 +160,7 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
       }
       const key = request.headers['idempotency-key'];
       const needsAuth = Boolean(route.auth || request.headers.authorization);
-      if (request.method === 'POST' && needsAuth && (typeof key !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(key))) {
+      if (request.method === 'POST' && (needsAuth || route.idempotency) && (typeof key !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(key))) {
         throw new HttpError(400, 'VALIDATION_ERROR', 'Idempotency-Key must contain 16–128 letters, numbers, underscores, or hyphens.');
       }
       if (request.method === 'POST' && rawBody.length && request.headers['content-type']?.split(';')[0].trim() !== 'application/json') {
@@ -168,7 +169,10 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
       let pubkey;
       if (needsAuth) pubkey = authenticate({ authorization: request.headers.authorization, method: request.method,
         url: origin + request.url, rawBody, idempotencyKey: key, verifyEvent, now: now() });
-      const result = await (route.scope === 'content' ? contentController : controller)[route.action]({ id: route.id, pubkey, body, key, digest: sha256(rawBody) });
+      const result = await (route.scope === 'content' ? contentController : controller)[route.action]({
+        id: route.id, pubkey, body, key, digest: sha256(rawBody),
+        purchaseToken: request.headers['x-purchase-token']
+      });
       response.writeHead(result.status);
       response.end(JSON.stringify(result.body));
     } catch (error) {

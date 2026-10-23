@@ -16,7 +16,7 @@ export function buildOfferEvent({ kind, creatorPubkey, attestorPubkey, terms, cr
     schema: 'contentport.offer.v1', terms, attestor_pubkey: attestorPubkey
   });
 }
-// Inputs must already have passed signature and wallet settlement verification.
+// Inputs must already have passed signature and the configured payment-evidence policy.
 // This pure builder does not verify payment, sign events, or publish to relays.
 export function buildLicenseEvent({ kind, attestorPubkey, offerEvent, settlement }) {
   validate('SignedEvent', offerEvent);
@@ -36,6 +36,10 @@ export function buildLicenseEvent({ kind, attestorPubkey, offerEvent, settlement
       schema: 'contentport.license.v1', offer_event_id: offerEvent.id,
       payment_hash: settlement.payment_hash, amount_sats: settlement.amount_sats,
       starts_at: settlement.settled_at, ends_at: endsAt,
-      evidence_type: 'contentport-settlement-attestation'
+      evidence_type: settlement.receipt_event_id ? 'contentport-nip57-provider-attestation' : 'contentport-settlement-attestation',
+      ...(settlement.purchase_id ? { purchase_id: settlement.purchase_id } : {}),
+      ...(settlement.receipt_event_id ? { zap_receipt_event_id: settlement.receipt_event_id } : {}),
+      ...(settlement.receiver_pubkey ? { receiver_pubkey: settlement.receiver_pubkey } : {}),
+      ...(settlement.payment_network ? { payment_network: settlement.payment_network } : {})
     });
 }

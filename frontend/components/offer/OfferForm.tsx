@@ -22,6 +22,7 @@ const EMPTY_FORM: FormState = {
   contentUrl: "",
   brandName: "",
   priceSats: 0,
+  creatorLightningAddress: "",
   licenseType: "30_DAY_SOCIAL",
   licenseDescription: LICENSE_TYPE_DESCRIPTIONS["30_DAY_SOCIAL"],
 };
@@ -122,6 +123,8 @@ export function OfferForm() {
     if (Boolean(videoId) && !linkedVideo)
       next.contentUrl = videoError ?? "Waiting for your video to load.";
     if (!form.brandName.trim()) next.brandName = "Brand is required.";
+    if (!/^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(form.creatorLightningAddress.trim()))
+      next.creatorLightningAddress = "Enter a public Lightning Address (name@domain).";
     if (!form.priceSats || form.priceSats <= 0)
       next.priceSats = "Price must be greater than 0.";
     if (!form.licenseDescription.trim())
@@ -192,6 +195,7 @@ export function OfferForm() {
             }
           />
           <PreviewRow label="Brand" value={form.brandName} />
+          <PreviewRow label="Creator Lightning Address" value={form.creatorLightningAddress} />
           <PreviewRow label="Price" value={`${form.priceSats.toLocaleString()} sats`} />
           <PreviewRow label="License type" value={LICENSE_TYPE_LABELS[form.licenseType]} />
           <PreviewRow label="License description" value={form.licenseDescription} />
@@ -284,6 +288,15 @@ export function OfferForm() {
           value={form.brandName}
           onChange={(e) => update("brandName", e.target.value)}
           error={errors.brandName}
+        />
+
+        <Input
+          label="Creator Lightning Address"
+          placeholder="creator@example.com"
+          hint="This destination is included in your signed offer. Changing it later requires publishing a new offer."
+          value={form.creatorLightningAddress}
+          onChange={(e) => update("creatorLightningAddress", e.target.value)}
+          error={errors.creatorLightningAddress}
         />
 
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
