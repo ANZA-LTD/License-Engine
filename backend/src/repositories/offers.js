@@ -129,6 +129,27 @@ export class PostgresOfferStore {
     await this.pool.query(`UPDATE zap_purchases SET status = 'failed', updated_at = $2
       WHERE id = $1 AND status = 'creating'`, [id, Math.floor(Date.now() / 1000)]);
   }
+  async issueDownloadGrant({ id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses = 5 }) {
+    await this.pool.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses)
+      VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8)`,
+      [id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses]);
+    return { id, token_hash: tokenHash };
+  }
+  async getVideo(id) {
+    return (await this.pool.query('SELECT * FROM videos WHERE id = $1', [id])).rows[0]?.document;
+  }
+  async getDownloadGrantByToken(tokenHash) {
+    return (await this.pool.query('SELECT * FROM download_grants WHERE token_hash = $1', [tokenHash])).rows[0];
+  }
+  async consumeDownloadGrant(tokenHash, now) {
+    const result = await this.pool.query(`UPDATE download_grants SET use_count = use_count + 1
+      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > to_timestamp($2::double precision)
+      AND use_count < max_uses RETURNING *`, [tokenHash, now]);
+    return result.rows[0];
+  }
+  async revokeDownloadGrant(id) {
+    await this.pool.query('UPDATE download_grants SET revoked_at = now() WHERE id = $1', [id]);
+  }
   async getZapPurchaseForBuyer(id, accessTokenHash) {
     return (await this.pool.query('SELECT * FROM zap_purchases WHERE id = $1 AND access_token_hash = $2',
       [id, accessTokenHash])).rows[0];

@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { authenticate, sha256 } from './middleware/auth.js';
-import { matchOfferRoute, matchPurchaseRoute, matchWebhookRoute } from './routes/offers.js';
+import { matchOfferRoute, matchPurchaseRoute, matchWebhookRoute, matchDownloadRoute } from './routes/offers.js';
 import { matchVideoRoute } from './routes/content.js';
 import { createOfferController } from './controllers/offers.js';
 import { createContentController } from './controllers/content.js';
@@ -138,6 +138,7 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
       }
       const route = matchWebhookRoute(request.method, url.pathname) || matchOfferRoute(request.method, url.pathname)
         || matchPurchaseRoute(request.method, url.pathname)
+        || matchDownloadRoute(request.method, url.pathname)
         || matchVideoRoute(request.method, url.pathname);
       if (!route) throw new HttpError(404, 'NOT_FOUND', 'Endpoint not found.');
       const chunks = [];
@@ -171,7 +172,8 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
         url: origin + request.url, rawBody, idempotencyKey: key, verifyEvent, now: now() });
       const result = await (route.scope === 'content' ? contentController : controller)[route.action]({
         id: route.id, pubkey, body, key, digest: sha256(rawBody),
-        purchaseToken: request.headers['x-purchase-token']
+        purchaseToken: request.headers['x-purchase-token'],
+        grantToken: route.token
       });
       response.writeHead(result.status);
       response.end(JSON.stringify(result.body));
