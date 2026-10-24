@@ -33,14 +33,16 @@ async function requestPublicJson(input, { lookupImpl = lookup, requestImpl = htt
   let addresses;
   try { addresses = await lookupImpl(url.hostname, { all: true, family: 4, verbatim: true }); }
   catch { throw new HttpError(503, 'LIGHTNING_ADDRESS_UNAVAILABLE', 'The creator Lightning Address service could not be resolved.'); }
-  if (!addresses.length || addresses.some(({ address }) => !isPublicIpv4(address))) {
-    throw new HttpError(502, 'LIGHTNING_ADDRESS_INVALID', 'The creator Lightning Address resolved to a non-public address.');
+  const resolved = Array.isArray(addresses) ? addresses[0] : addresses;
+  const address = typeof resolved === 'string' ? resolved : resolved?.address;
+  if (!address || addresses.some?.(({ address: a }) => !isPublicIpv4(a ?? address))) {
+    throw new HttpError(502, 'LIGHTNING_ADDRESS_INVALID', `Resolved to non-public or missing address: ${JSON.stringify(addresses)}`);
   }
+  console.error('LNURL lookup', url.hostname, JSON.stringify(addresses), 'resolved=', address);
   return new Promise((resolve, reject) => {
     const request = requestImpl(url, {
       method: 'GET',
       headers: { Accept: 'application/json' },
-      lookup: (_hostname, _options, callback) => callback(null, addresses[0].address, 4),
       servername: url.hostname,
       timeout: timeoutMs
     }, response => {
@@ -61,7 +63,7 @@ async function requestPublicJson(input, { lookupImpl = lookup, requestImpl = htt
       });
     });
     request.on('timeout', () => request.destroy(new Error('Request timed out')));
-    request.on('error', () => reject(new HttpError(503, 'LIGHTNING_ADDRESS_UNAVAILABLE', 'The creator Lightning Address service is unavailable.')));
+    request.on('error', (error) => reject(new HttpError(503, 'LIGHTNING_ADDRESS_UNAVAILABLE', `The creator Lightning Address service is unavailable (${url.hostname}): ${error?.message || 'unknown error'} addresses=${JSON.stringify(addresses)} address=${address}`)));
     request.end();
   });
 }
