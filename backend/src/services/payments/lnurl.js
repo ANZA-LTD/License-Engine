@@ -43,6 +43,10 @@ async function requestPublicJson(input, { lookupImpl = lookup, requestImpl = htt
     const request = requestImpl(url, {
       method: 'GET',
       headers: { Accept: 'application/json' },
+      lookup: (_hostname, options, callback) => {
+        if (options && options.all) callback(null, [{ address, family: 4 }]);
+        else callback(null, address, 4);
+      },
       servername: url.hostname,
       timeout: timeoutMs
     }, response => {
