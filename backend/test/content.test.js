@@ -117,12 +117,13 @@ test('the signature covers exactly the string Cloudinary reconstructs', () => {
   const session = 'a'.repeat(32);
   const issued = cloudinary.createUploadAuthorization({ uploadSessionId: session, timestamp: 1790888846 });
   const expected = createHash('sha1')
-    .update(`context=contentport_session=${session}&folder=${FOLDER}&timestamp=1790888846` + SECRET)
+    .update(`context=contentport_session=${session}&folder=${FOLDER}&timestamp=1790888846&type=authenticated` + SECRET)
     .digest('hex');
   assert.equal(issued.signature, expected);
   assert.equal(issued.resource_type, 'video', 'still returned, the browser needs it for the upload URL');
+  assert.equal(issued.type, 'authenticated', 'uploaded assets must not be publicly deliverable');
   assert.deepEqual(Object.keys(issued).sort(),
-    ['allowed_formats', 'api_key', 'cloud_name', 'context', 'folder', 'resource_type', 'signature', 'timestamp', 'upload_session_id']);
+    ['allowed_formats', 'api_key', 'cloud_name', 'context', 'folder', 'resource_type', 'signature', 'timestamp', 'type', 'upload_session_id']);
 });
 
 test('a media-management parameter can never leak into the signature', () => {

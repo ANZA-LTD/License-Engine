@@ -3,6 +3,7 @@
 // and is used to sign, never returned. Media reference URLs are built here so
 // transformation strings are not scattered through frontend components.
 import { createHash } from 'node:crypto';
+import { v2 as cloudinarySdk } from 'cloudinary';
 import { HttpError } from '../../utils/errors.js';
 
 export const RESOURCE_TYPE = 'video';
@@ -48,6 +49,7 @@ function signaturePayload(params) {
 
 export function createCloudinary({ cloudName, apiKey, apiSecret, folder }) {
   if (!cloudName || !apiKey || !apiSecret) return null;
+  cloudinarySdk.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret });
   const root = `${folder.replace(/\/+$/, '')}/`;
   return {
     name: 'cloudinary',
@@ -62,10 +64,11 @@ export function createCloudinary({ cloudName, apiKey, apiSecret, folder }) {
     // signaturePayload strips the media-management keys, so a caller cannot
     // reintroduce the mismatch.
     createUploadAuthorization({ uploadSessionId, timestamp, ...signed }) {
-      const params = { ...signed, context: `contentport_session=${uploadSessionId}`, folder, timestamp };
+      const params = { ...signed, context: `contentport_session=${uploadSessionId}`, folder, timestamp, type: 'authenticated' };
       return {
         cloud_name: cloudName, api_key: apiKey, resource_type: RESOURCE_TYPE, folder,
         context: params.context, upload_session_id: uploadSessionId, timestamp,
+        type: 'authenticated',
         signature: createHash('sha1').update(signaturePayload(params) + apiSecret).digest('hex'),
         allowed_formats: ALLOWED_FORMATS
       };
@@ -82,6 +85,12 @@ export function createCloudinary({ cloudName, apiKey, apiSecret, folder }) {
       return createHash('sha256')
         .update(`contentport.asset.v1\u0000${cloudName}\u0000${RESOURCE_TYPE}\u0000${publicId}\u0000${assetVersion}`)
         .digest('hex');
+    },
+    signedOriginalUrl(media, expiresAt) {
+      return cloudinarySdk.url(media.publicId, {
+        resource_type: RESOURCE_TYPE, type: 'authenticated', format: media.format,
+        sign_url: true, expires_at: expiresAt
+      });
     }
   };
 }

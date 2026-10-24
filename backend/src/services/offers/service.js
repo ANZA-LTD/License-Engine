@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { validate } from '../../validators/validation.js';
 import { finalizeEvent } from 'nostr-tools/pure';
@@ -13,7 +13,7 @@ const DISCOVERY_LIMIT = 50;
 
 export function createOfferService({ store, verifyEvent, kind, attestorPubkey, attestorSecretKey = null,
   speedWebhookSecret, paymentProvider = null, zapPaymentProvider = null, paymentEnabled = true,
-  paymentNetwork = 'regtest', now = () => Math.floor(Date.now() / 1000) }) {
+  paymentNetwork = 'regtest', cloudinary = null, now = () => Math.floor(Date.now() / 1000) }) {
   const input = (schema, body) => {
     try { validate(schema, body); } catch (error) { throw new HttpError(400, 'VALIDATION_ERROR', error.message); }
   };
@@ -280,6 +280,14 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         ...(offer.license_event_id ? { licenseNostrEventId: offer.license_event_id } : {})
       } };
     },
+    async getLicense(id) {
+      const offer = await store.getOffer(id);
+      if (!offer || !['published', 'licensing', 'licensed'].includes(offer.status)) throw new HttpError(404, 'NOT_FOUND', 'Offer not found.');
+      if (!offer.license_event_id) throw new HttpError(404, 'NOT_FOUND', 'No license has been issued for this offer.');
+      const event = await store.getOfferEvent(id, offer.license_event_id);
+      if (!event) throw new HttpError(404, 'NOT_FOUND', 'License event is unavailable.');
+      return { status: 200, body: { offerId: id, licenseNostrEventId: offer.license_event_id, event } };
+    },
     async getPurchaseStatus(id, purchaseToken) {
       if (!paymentEnabled) throw new HttpError(503, 'PAYMENTS_DISABLED', 'Lightning payments are not enabled in this environment.');
       if (!zapPaymentProvider) throw new HttpError(404, 'NOT_FOUND', 'Purchase status is unavailable.');
@@ -318,7 +326,40 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         ...(offer?.licensed_at ? { licensedAt: offer.licensed_at } : {})
       } };
     },
-    async lightningWebhook({ body, headers, rawBody, provider = 'speed' }) {
+    async issueDownloadGrant(id, purchaseToken) {
+      if (!paymentEnabled) throw new HttpError(503, 'PAYMENTS_DISABLED', 'Lightning payments are not enabled in this environment.');
+      if (!zapPaymentProvider) throw new HttpError(404, 'NOT_FOUND', 'Download grants are unavailable.');
+      if (typeof purchaseToken !== 'string' || !/^[0-9a-f]{64}$/.test(purchaseToken)) throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
+      const tokenHash = createHash('sha256').update(purchaseToken).digest('hex');
+      const purchase = await store.getZapPurchaseForBuyer(id, tokenHash);
+      if (!purchase || purchase.status !== 'verified') throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
+      const offer = await store.getOffer(purchase.offer_id);
+      if (!offer || offer.status !== 'licensed' || !offer.license_event_id || !offer.video_id) {
+        throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this purchase.');
+      }
+      const rawToken = randomBytes(32).toString('hex');
+      const grantTokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const expiresAt = now() + 3600;
+      await store.issueDownloadGrant({
+        id: randomUUID(), offerId: offer.id, purchaseId: purchase.id,
+        licenseEventId: offer.license_event_id, videoId: offer.video_id,
+        tokenHash: grantTokenHash, expiresAt, maxUses: 5
+      });
+      return { status: 201, body: { grantToken: rawToken, expiresAt } };
+    },
+async consumeDownloadGrant(input) {
+      const grantToken = typeof input === 'string' ? input : input?.grantToken;
+      if (typeof grantToken !== 'string' || !/^[0-9a-f]{64}$/.test(grantToken)) throw new HttpError(404, 'NOT_FOUND', 'Download grant not found.');
+      const tokenHash = createHash('sha256').update(grantToken).digest('hex');
+      const grant = await store.consumeDownloadGrant(tokenHash, now());
+      if (!grant) throw new HttpError(404, 'NOT_FOUND', 'Download grant not found or expired.');
+      const video = await store.getVideo(grant.video_id);
+      if (!video || !cloudinary) throw new HttpError(503, 'MEDIA_UNAVAILABLE', 'Protected media is unavailable.');
+      const expiresAt = Math.floor(new Date(grant.expires_at).getTime() / 1000);
+      const url = cloudinary.signedOriginalUrl({ publicId: video.public_id, format: video.format }, expiresAt);
+      return { status: 200, body: { url, expiresAt } };
+    },
+    async lightningWebhook({ body, headers, rawBody, provider }) {
       if (!body || typeof body !== 'object') throw new HttpError(400, 'VALIDATION_ERROR', 'Webhook payload must be JSON.');
       if (provider !== 'speed') throw new HttpError(501, 'PROVIDER_NOT_SUPPORTED', 'This webhook provider is not supported.');
       verifySpeedWebhook({ rawBody, headers, secret: speedWebhookSecret });
