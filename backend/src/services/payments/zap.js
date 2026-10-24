@@ -24,9 +24,19 @@ export function createZapRequest({ receiverPubkey, amountMsat, relays, offerEven
 }
 
 export function validateZapReceipt({ receipt, purchase, verify = verifyEvent, now = Math.floor(Date.now() / 1000) }) {
-  if (!receipt || receipt.kind !== 9735 || receipt.pubkey !== purchase.receiver_pubkey || !verify(receipt)) {
+  console.error('ZAP DEBUG', JSON.stringify({
+    receiptPubkey: receipt?.pubkey,
+    receiverPubkey: purchase?.receiver_pubkey,
+    receiptPTags: receipt?.tags?.filter(t => t[0] === 'p'),
+    receiptPTagsUpper: receipt?.tags?.filter(t => t[0] === 'P'),
+    receiptETag: receipt?.tags?.filter(t => t[0] === 'e'),
+    offerEventId: purchase?.offer_event_id
+  }));
+  if (!receipt || receipt.kind !== 9735 || !verify(receipt)) {
     throw new TypeError('Zap receipt signature or receiver key is invalid.');
   }
+  const receiptPTags = receipt.tags.filter(tag => tag[0] === 'p').map(tag => tag[1]);
+  const receiptPTagsUpper = receipt.tags.filter(tag => tag[0] === 'P').map(tag => tag[1]);
   if (singleTag(receipt, 'description') !== purchase.zap_request_json) {
     throw new TypeError('Zap receipt is not associated with this purchase request.');
   }
@@ -37,9 +47,9 @@ export function validateZapReceipt({ receipt, purchase, verify = verifyEvent, no
   if (singleTag(receipt, 'bolt11').toLowerCase() !== purchase.invoice_request.toLowerCase()) {
     throw new TypeError('Zap receipt invoice does not match this purchase.');
   }
-  if (singleTag(receipt, 'P') !== request.pubkey ||
-      singleTag(receipt, 'p') !== purchase.receiver_pubkey ||
-      singleTag(receipt, 'e') !== purchase.offer_event_id) {
+  if (!receiptPTags.includes(purchase.receiver_pubkey) ||
+      (receiptPTagsUpper.length > 0 && !receiptPTagsUpper.includes(request.pubkey)) ||
+      !receipt.tags.some(tag => tag[0] === 'e' && tag[1] === purchase.offer_event_id)) {
     throw new TypeError('Zap receipt recipient or offer does not match this purchase.');
   }
   if (singleTag(request, 'p') !== purchase.receiver_pubkey ||
