@@ -20,4 +20,4 @@ jobs:
       - run: gcloud auth configure-docker africa-south1-docker.pkg.dev --quiet
       - run: docker build -t africa-south1-docker.pkg.dev/anza-staging/backend/api:${{ github.sha }} ./backend
       - run: docker push africa-south1-docker.pkg.dev/anza-staging/backend/api:${{ github.sha }}
-      - run: gcloud run deploy anza-staging --image africa-south1-docker.pkg.dev/anza-staging/backend/api:${{ github.sha }} --region africa-south1 --platform managed --allow-unauthenticated --add-cloudsql-instances anza-staging:africa-south1:anza-staging-db --env-vars-file backend/.staging-env.yaml
+      - run: gcloud run deploy anza-staging --image africa-south1-docker.pkg.dev/anza-staging/backend/api:${{ github.sha }} --region africa-south1 --platform managed --allow-unauthenticated --add-cloudsql-instances anza-staging:africa-south1:anza-staging-db
