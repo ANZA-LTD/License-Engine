@@ -1,6 +1,30 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Navbar } from "@/components/layout/Navbar";
 import { OfferForm } from "@/components/offer/OfferForm";
+import { siteUrl } from "@/lib/site";
+
+// Offer-creation SEO: this page is a high-intent creator entry point and needs
+// a clear title, description, and canonical URL for discoverability.
+export const metadata: Metadata = {
+  title: "Create a licensing offer",
+  description:
+    "Create a plain-language licensing offer for your content with usage rights, pricing, and payment terms.",
+  alternates: { canonical: `${siteUrl}/create` },
+  openGraph: {
+    title: "Create a licensing offer",
+    description:
+      "Create a plain-language licensing offer for your content with usage rights, pricing, and payment terms.",
+    url: `${siteUrl}/create`,
+    siteName: "ANZA",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Create a licensing offer",
+    description:
+      "Create a plain-language licensing offer for your content with usage rights, pricing, and payment terms.",
+  },
+};
 
 /**
  * Screen 2 — Creator Offer Form.
@@ -14,7 +38,9 @@ export default function CreateOfferPage() {
     <main>
       <Navbar backHref="/creator-profile" />
       <div className="mx-auto max-w-2xl px-6 py-12">
-        <h1 className="text-2xl font-bold text-text-primary">Create Licensing Offer</h1>
+        <h1 className="text-2xl font-bold text-text-primary">
+          Create Licensing Offer
+        </h1>
         <p className="mt-1 mb-8 text-sm text-text-secondary">
           Define how your content can be licensed.
         </p>
