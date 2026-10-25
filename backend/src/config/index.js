@@ -85,7 +85,7 @@ function readDocsAuth(env) {
   if (password && (password.length < 32 || password.length > 256 || /[\r\n]/.test(password))) {
     throw new Error('SWAGGER_UI_PASSWORD must contain at least 32 and at most 256 characters, with no newlines');
   }
-  if (env.NODE_ENV === 'production' && (!username || !password)) {
+  if (env.NODE_ENV === 'production' && env.APP_ENV === 'production' && (!username || !password)) {
     throw new Error('Production requires SWAGGER_UI_USERNAME and SWAGGER_UI_PASSWORD to protect API documentation');
   }
   return { username, password, readOnly: env.NODE_ENV === 'production' };
