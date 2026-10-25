@@ -151,8 +151,11 @@ export default function BrandGigsGuidePage() {
             >
               Next: Usage rights
             </Link>
-            <Link href="/create" className="text-blue-700 hover:text-blue-800">
-              Create an offer
+            <Link
+              href="/creator-profile"
+              className="text-blue-700 hover:text-blue-800"
+            >
+              Open My Videos
             </Link>
           </div>
         </article>

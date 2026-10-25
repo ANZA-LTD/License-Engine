@@ -70,7 +70,7 @@ export default function RootLayout({
 
   return (
     <html lang="en" className={inter.variable}>
-      <body className="flex min-h-screen flex-col font-sans">
+      <body className="flex min-h-screen flex-col font-sans antialiased">
         <JsonLd data={organizationSchema} />
         <div className="flex-1">{children}</div>
         <Footer />
