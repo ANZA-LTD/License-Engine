@@ -142,8 +142,11 @@ export default function ProofOfWorkGuidePage() {
             >
               Previous: Payment risk
             </Link>
-            <Link href="/create" className="text-blue-700 hover:text-blue-800">
-              Create a licensing offer
+            <Link
+              href="/creator-profile"
+              className="text-blue-700 hover:text-blue-800"
+            >
+              Open My Videos
             </Link>
           </div>
         </article>
