@@ -7,6 +7,8 @@ export function createOfferController(service) {
     createPayment: context => service.createPayment(context.id, context),
     getStatus: context => service.getStatus(context.id),
     getPurchaseStatus: context => service.getPurchaseStatus(context.id, context.purchaseToken),
+    issueDownloadGrant: context => service.issueDownloadGrant(context.id, context.purchaseToken),
+    consumeDownloadGrant: context => service.consumeDownloadGrant(context.grantToken),
     lightningWebhook: context => service.lightningWebhook(context)
   };
 }
