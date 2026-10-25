@@ -27,7 +27,7 @@ const paymentProvider = config.paymentImplementation === 'polar-lnd'
   ? createLndClient({ restUrl: config.lndRestUrl, macaroon: config.lndMacaroon }) : null;
 const zapPaymentProvider = config.paymentImplementation === 'lnurl-zap'
   ? createZapPaymentProvider({ network: config.paymentNetwork, relays: config.relays }) : null;
-const service = createOfferService({ store, verifyEvent, paymentProvider, zapPaymentProvider, ...config });
+const service = createOfferService({ store, verifyEvent, paymentProvider, zapPaymentProvider, ...config, cloudinary: createCloudinary(config.cloudinary) });
 const contentService = createContentService({ store, cloudinary: createCloudinary(config.cloudinary) });
 const publish = createRelayPublisher({ relays: config.relays });
 const server = createApp({ service, contentService, verifyEvent, origin: config.origin, corsOrigins: config.corsOrigins,
