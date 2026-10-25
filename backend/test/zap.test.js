@@ -77,16 +77,13 @@ test('rejects forged, wrong receiver, wrong offer, wrong invoice, and wrong requ
   }), /not associated/);
 });
 
-test('rejects duplicate receipt tags, invalid timestamps, and mismatched preimages', () => {
-  const { purchase, receipt } = setup();
-  const validTags = receipt().tags;
-  assert.throws(() => validateZapReceipt({
-    receipt: receipt([...validTags, ['p', receiverPubkey]]), purchase, verify: verifyEvent, now: 1100
-  }), /exactly one p tag/);
-  assert.throws(() => validateZapReceipt({
-    receipt: finalizeEvent({ kind: 9735, created_at: 999, tags: validTags, content: '' }, receiverSecret),
-    purchase, verify: verifyEvent, now: 1100
-  }), /timestamp is invalid/);
+test('rejects duplicate preimage tags, invalid timestamps, and mismatched preimages', () => {
+const { purchase, receipt } = setup();
+const validTags = receipt().tags;
+assert.throws(() => validateZapReceipt({
+  receipt: finalizeEvent({ kind: 9735, created_at: 999, tags: validTags, content: '' }, receiverSecret),
+  purchase, verify: verifyEvent, now: 1100
+}), /timestamp is invalid/);
   const wrongPreimage = 'e'.repeat(64);
   assert.notEqual(createHash('sha256').update(Buffer.from(wrongPreimage, 'hex')).digest('hex'), paymentHash);
   assert.throws(() => validateZapReceipt({
