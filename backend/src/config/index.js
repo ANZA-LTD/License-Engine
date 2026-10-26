@@ -91,6 +91,14 @@ function readDocsAuth(env) {
   return { username, password, readOnly: env.NODE_ENV === 'production' };
 }
 
+function readS2sSecret(env, appEnv) {
+  const secret = String(env.LE_ATTESTATION_SECRET || '').trim();
+  if (appEnv !== 'development' && secret.length < 16) {
+    throw new Error(`${appEnv} requires LE_ATTESTATION_SECRET of at least 16 characters for service-to-service attestation.`);
+  }
+  return secret;
+}
+
 export function readConfig(env = process.env) {
   const port = Number(env.PORT || 3000);
   const kind = Number(env.NOSTR_OFFER_KIND);
@@ -133,9 +141,10 @@ export function readConfig(env = process.env) {
   const host = env.HOST || (env.K_SERVICE ? '0.0.0.0' : '127.0.0.1');
   const corsOrigins = readCorsOrigins(env);
   const docsAuth = readDocsAuth(env);
+  const s2sSecret = readS2sSecret(env, appEnv);
   return { host, port, origin: origin.origin, corsOrigins, databaseUrl: env.DATABASE_URL,
     appEnv, paymentNetwork, paymentEnabled, paymentImplementation: appEnv === 'development' ? 'polar-lnd' : 'lnurl-zap',
     kind, attestorPubkey, attestorSecretKey, relays,
     ...(appEnv === 'development' ? { lndRestUrl: readLndUrl(env.LND_REST_URL), lndMacaroon: env.LND_MACAROON?.trim() || null } : {}),
-    cloudinary: readCloudinary(env), docsAuth };
+    cloudinary: readCloudinary(env), docsAuth, s2sSecret };
 }
