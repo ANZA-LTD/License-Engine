@@ -31,7 +31,7 @@ const service = createOfferService({ store, verifyEvent, paymentProvider, zapPay
 const contentService = createContentService({ store, cloudinary: createCloudinary(config.cloudinary) });
 const publish = createRelayPublisher({ relays: config.relays });
 const server = createApp({ service, contentService, verifyEvent, origin: config.origin, corsOrigins: config.corsOrigins,
-  readinessCheck: checkDatabaseReadiness, docsAuth: config.docsAuth });
+  readinessCheck: checkDatabaseReadiness, docsAuth: config.docsAuth, s2sSecret: config.s2sSecret });
 let stopping = false;
 let active;
 const tick = () => { if (!stopping && !active) active = store.publishNext(publish).catch(error => console.error('Publication worker:', error.message)).finally(() => { active = undefined; }); };
