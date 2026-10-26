@@ -137,6 +137,24 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
       settledAt: evidence.settled_at, licenseEvent: signed
     });
   };
+  const issueExternalPaymentLicense = async (offer, attestation) => {
+    if (!attestorSecretKey) throw new HttpError(503, 'LICENSE_ATTESTOR_NOT_CONFIGURED', 'The license attestor is not configured.');
+    const offerEvent = await store.getOfferEvent(offer.id, offer.event_id);
+    if (!offer || !offerEvent) throw new HttpError(503, 'LICENSE_EVENT_UNAVAILABLE', 'The signed offer event is unavailable for license attestation.');
+    if (offer.status !== 'published') throw new HttpError(409, 'OFFER_NOT_PUBLISHED', 'The offer must be published before a license can be issued.');
+    if (offer.license_event_id) throw new HttpError(409, 'OFFER_ALREADY_LICENSED', 'A license has already been issued for this offer.');
+    const template = buildLicenseEvent({ kind, attestorPubkey, offerEvent, settlement: {
+      offer_event_id: offer.event_id,
+      external_reference: attestation.externalReference,
+      evidence_type: attestation.evidenceType || 'external-payment-attestation',
+      amount_sats: Number(offer.terms.amount_sats || 0),
+      settled_at: attestation.settledAt,
+      purchase_id: attestation.purchaseReference
+    } });
+    const signed = finalizeEvent(template, attestorSecretKey);
+    if (signed.pubkey !== attestorPubkey) throw new HttpError(500, 'ATTESTOR_KEY_MISMATCH', 'The configured attestor key cannot sign this license event.');
+    return store.queueLicense({ ...offer, status: 'licensing', license_event_id: signed.id }, signed);
+  };
   return {
     async create({ pubkey, body, key, digest }) {
       input('OfferDraft', body);
@@ -326,24 +344,44 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         ...(offer?.licensed_at ? { licensedAt: offer.licensed_at } : {})
       } };
     },
-    async issueDownloadGrant(id, purchaseToken) {
+    async issueDownloadGrant(id, purchaseToken, externalCredential) {
       if (!paymentEnabled) throw new HttpError(503, 'PAYMENTS_DISABLED', 'Lightning payments are not enabled in this environment.');
-      if (!zapPaymentProvider) throw new HttpError(404, 'NOT_FOUND', 'Download grants are unavailable.');
-      if (typeof purchaseToken !== 'string' || !/^[0-9a-f]{64}$/.test(purchaseToken)) throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
-      const tokenHash = createHash('sha256').update(purchaseToken).digest('hex');
-      const purchase = await store.getZapPurchaseForBuyer(id, tokenHash);
-      if (!purchase || purchase.status !== 'verified') throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
-      const offer = await store.getOffer(purchase.offer_id);
+      const offer = await store.getOffer(id);
       if (!offer || offer.status !== 'licensed' || !offer.license_event_id || !offer.video_id) {
-        throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this purchase.');
+        throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this offer.');
+      }
+      let purchaseId = null;
+      let externalReference = null;
+      if (externalCredential && /^[0-9a-f]{64}$/.test(externalCredential)) {
+        // External purchase-associated credential: validate against the
+        // association registered by the Payment Microservice for this offer.
+        const tokenHash = createHash('sha256').update(externalCredential).digest('hex');
+        const association = await store.getExternalPurchaseAssociationByToken(tokenHash);
+        if (!association || association.offer_id !== id) {
+          throw new HttpError(403, 'FORBIDDEN', 'The download credential is not valid for this offer.');
+        }
+        await store.consumeExternalPurchaseAssociation(tokenHash, now());
+        externalReference = association.external_reference;
+      } else if (typeof purchaseToken === 'string' && /^[0-9a-f]{64}$/.test(purchaseToken)) {
+        if (!zapPaymentProvider) throw new HttpError(404, 'NOT_FOUND', 'Download grants are unavailable.');
+        const tokenHash = createHash('sha256').update(purchaseToken).digest('hex');
+        const purchase = await store.getZapPurchaseForBuyer(id, tokenHash);
+        if (!purchase || purchase.status !== 'verified') throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
+        purchaseId = purchase.id;
+        const offerCheck = await store.getOffer(purchase.offer_id);
+        if (!offerCheck || offerCheck.status !== 'licensed' || !offerCheck.license_event_id || !offerCheck.video_id) {
+          throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this purchase.');
+        }
+      } else {
+        throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
       }
       const rawToken = randomBytes(32).toString('hex');
       const grantTokenHash = createHash('sha256').update(rawToken).digest('hex');
       const expiresAt = now() + 3600;
       await store.issueDownloadGrant({
-        id: randomUUID(), offerId: offer.id, purchaseId: purchase.id,
+        id: randomUUID(), offerId: offer.id, purchaseId,
         licenseEventId: offer.license_event_id, videoId: offer.video_id,
-        tokenHash: grantTokenHash, expiresAt, maxUses: 5
+        tokenHash: grantTokenHash, expiresAt, maxUses: 5, externalReference
       });
       return { status: 201, body: { grantToken: rawToken, expiresAt } };
     },
@@ -368,6 +406,31 @@ async consumeDownloadGrant(input) {
         paymentHash: normalized.paymentHash || null, offerId: normalized.offerId || null, payload: body, headers };
       await store.saveLightningWebhook(entry);
       return { status: 200, body: { received: true, provider: entry.provider, eventType: entry.eventType, offerId: entry.offerId || null } };
+    },
+    async externalPaymentAttestation({ id, body, key }) {
+      if (!body || typeof body !== 'object') throw new HttpError(400, 'VALIDATION_ERROR', 'Attestation body must be JSON.');
+      const { offerId, offerEventId, externalReference, currency, amountMinor, settledAt, evidenceType, credentialToken } = body;
+      if (!offerId || !externalReference || !Number.isInteger(settledAt)) {
+        throw new HttpError(400, 'VALIDATION_ERROR', 'Attestation requires offerId, externalReference, and settledAt.');
+      }
+      const offer = await store.getOffer(offerId);
+      if (!offer) throw new HttpError(404, 'NOT_FOUND', 'Offer not found.');
+      // Idempotent: if already licensed, return existing license event.
+      if (offer.license_event_id) {
+        const event = await store.getOfferEvent(offerId, offer.license_event_id);
+        return { status: 200, body: { offered: false, alreadyLicensed: true, licenseEventId: offer.license_event_id, event } };
+      }
+      const result = await issueExternalPaymentLicense(offer, {
+        externalReference, evidenceType, settledAt, purchaseReference: body.purchaseReference
+      });
+      // Register the purchase-associated download credential if provided.
+      if (credentialToken && /^[0-9a-f]{64}$/.test(credentialToken)) {
+        const tokenHash = createHash('sha256').update(credentialToken).digest('hex');
+        await store.registerExternalPurchaseAssociation({
+          id: randomUUID(), offerId, externalReference, credentialTokenHash: tokenHash
+        });
+      }
+      return { status: 200, body: { offered: true, licenseEventId: result.license_event_id } };
     }
   };
 }
