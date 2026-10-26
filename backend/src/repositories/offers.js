@@ -129,11 +129,25 @@ export class PostgresOfferStore {
     await this.pool.query(`UPDATE zap_purchases SET status = 'failed', updated_at = $2
       WHERE id = $1 AND status = 'creating'`, [id, Math.floor(Date.now() / 1000)]);
   }
-  async issueDownloadGrant({ id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses = 5 }) {
-    await this.pool.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses)
-      VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8)`,
-      [id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses]);
+  async issueDownloadGrant({ id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses = 5, externalReference }) {
+    await this.pool.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses, external_reference)
+      VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8,$9)`,
+      [id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses, externalReference || null]);
     return { id, token_hash: tokenHash };
+  }
+  async registerExternalPurchaseAssociation({ id, offerId, externalReference, credentialTokenHash }) {
+    await this.pool.query(`INSERT INTO external_purchase_associations(id, offer_id, external_reference, credential_token_hash)
+      VALUES ($1,$2,$3,$4)`,
+      [id, offerId, externalReference, credentialTokenHash]);
+    return { id };
+  }
+  async getExternalPurchaseAssociationByToken(tokenHash) {
+    return (await this.pool.query('SELECT * FROM external_purchase_associations WHERE credential_token_hash = $1 AND consumed_at IS NULL', [tokenHash])).rows[0] || null;
+  }
+  async consumeExternalPurchaseAssociation(tokenHash, now) {
+    const result = await this.pool.query(`UPDATE external_purchase_associations SET consumed_at = to_timestamp($2::double precision)
+      WHERE credential_token_hash = $1 AND consumed_at IS NULL RETURNING *`, [tokenHash, now]);
+    return result.rows[0];
   }
   async getVideo(id) {
     return (await this.pool.query('SELECT * FROM videos WHERE id = $1', [id])).rows[0]?.document;
