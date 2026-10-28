@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
-import { authenticate, sha256 } from './middleware/auth.js';
+import { authenticate, sha256, authenticateServiceToService } from './middleware/auth.js';
 import { matchOfferRoute, matchPurchaseRoute, matchWebhookRoute, matchDownloadRoute } from './routes/offers.js';
 import { matchVideoRoute } from './routes/content.js';
 import { createOfferController } from './controllers/offers.js';
@@ -83,7 +83,7 @@ function serveApiDocs(request, response, url, docsAuth) {
   return true;
 }
 
-export function createApp({ service, contentService = null, verifyEvent, origin, corsOrigins = [], readinessCheck, docsAuth = null, now = () => Math.floor(Date.now() / 1000), onError = console.error }) {
+export function createApp({ service, contentService = null, verifyEvent, origin, corsOrigins = [], readinessCheck, docsAuth = null, s2sSecret = null, now = () => Math.floor(Date.now() / 1000), onError = console.error }) {
   const controller = createOfferController(service);
   const contentController = createContentController(contentService || new Proxy({}, { get: () => () => {
     throw new HttpError(501, 'CONTENT_NOT_CONFIGURED', 'The content layer is not available.');
@@ -94,7 +94,7 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
     if (requestOrigin && corsOrigins.includes(requestOrigin)) {
       response.setHeader('Access-Control-Allow-Origin', requestOrigin);
       response.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-      response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Idempotency-Key, X-Purchase-Token');
+      response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Idempotency-Key, X-Purchase-Token, X-External-Credential');
       response.setHeader('Access-Control-Max-Age', '600');
     }
 
@@ -160,7 +160,7 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
         return;
       }
       const key = request.headers['idempotency-key'];
-      const needsAuth = Boolean(route.auth || request.headers.authorization);
+      const needsAuth = Boolean(route.auth || route.s2s || request.headers.authorization);
       if (request.method === 'POST' && (needsAuth || route.idempotency) && (typeof key !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(key))) {
         throw new HttpError(400, 'VALIDATION_ERROR', 'Idempotency-Key must contain 16–128 letters, numbers, underscores, or hyphens.');
       }
@@ -168,11 +168,20 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
         throw new HttpError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Use application/json.');
       }
       let pubkey;
-      if (needsAuth) pubkey = authenticate({ authorization: request.headers.authorization, method: request.method,
-        url: origin + request.url, rawBody, idempotencyKey: key, verifyEvent, now: now() });
+      if (route.s2s) {
+        if (!s2sSecret) throw new HttpError(503, 'S2S_AUTH_NOT_CONFIGURED', 'Service-to-service authentication is not configured.');
+        if (!authenticateServiceToService(request.headers.authorization, s2sSecret)) {
+          throw new HttpError(401, 'UNAUTHENTICATED', 'Service-to-service authentication required.');
+        }
+        pubkey = 'service';
+      } else if (needsAuth) {
+        pubkey = authenticate({ authorization: request.headers.authorization, method: request.method,
+          url: origin + request.url, rawBody, idempotencyKey: key, verifyEvent, now: now() });
+      }
       const result = await (route.scope === 'content' ? contentController : controller)[route.action]({
         id: route.id, pubkey, body, key, digest: sha256(rawBody),
         purchaseToken: request.headers['x-purchase-token'],
+        externalCredential: request.headers['x-external-credential'],
         grantToken: route.token
       });
       response.writeHead(result.status);
