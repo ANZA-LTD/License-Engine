@@ -58,10 +58,18 @@ schemas.Error = object({ error: object({ code: text, message: text }) });
 schemas.Settlement = {
   type: 'object',
   properties: {
-    offer_event_id: hex, payment_hash: hex, amount_sats: positive, settled_at: integer,
-    purchase_id: id, receipt_event_id: hex, receiver_pubkey: hex, payment_network: enumeration('mainnet')
+    offer_event_id: hex,
+    payment_hash: hex,
+    amount_sats: positive,
+    settled_at: integer,
+    external_reference: { type: 'string', minLength: 1, maxLength: 200 },
+    evidence_type: enumeration('external-payment-attestation'),
+    purchase_id: id,
+    receipt_event_id: hex,
+    receiver_pubkey: hex,
+    payment_network: enumeration('mainnet')
   },
-  required: ['offer_event_id', 'payment_hash', 'amount_sats', 'settled_at'],
+  required: ['offer_event_id', 'settled_at'],
   additionalProperties: false
 };
 // POST /offers accepts either the complete signed Terms, or the same terms
