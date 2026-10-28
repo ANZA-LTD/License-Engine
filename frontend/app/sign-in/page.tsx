@@ -16,9 +16,31 @@
  *   - The actual Nostr identity validation and role assignment should be done
  *     by the backend once the user authenticates via Nostr/NIP-07.
  */
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, BriefcaseBusiness, Video } from "lucide-react";
 import { Navbar } from "@/components/layout/Navbar";
+import { siteUrl } from "@/lib/site";
+
+export const metadata: Metadata = {
+  title: "Choose how to use ANZA",
+  description:
+    "Create a licensing offer as a creator or review content offers as a brand.",
+  alternates: { canonical: `${siteUrl}/sign-in` },
+  openGraph: {
+    title: "Choose how to use ANZA",
+    description:
+      "Create a licensing offer as a creator or review content offers as a brand.",
+    url: `${siteUrl}/sign-in`,
+    siteName: "ANZA",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Choose how to use ANZA",
+    description:
+      "Create a licensing offer as a creator or review content offers as a brand.",
+  },
+};
 
 const roles = [
   {
@@ -46,9 +68,9 @@ export default function SignInPage() {
           <div className="grid items-center gap-10 lg:grid-cols-2">
             <div className="space-y-8">
               <div>
-                <p className="text-4xl font-black tracking-tight text-slate-900 md:text-5xl">
+                <h1 className="text-4xl font-black tracking-tight text-slate-900 md:text-5xl">
                   License creator content.
-                </p>
+                </h1>
                 <p className="mt-2 text-4xl font-black tracking-tight text-slate-900 md:text-5xl">
                   Prove the agreement.
                 </p>
