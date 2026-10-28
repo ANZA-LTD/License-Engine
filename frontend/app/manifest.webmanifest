@@ -1,0 +1,35 @@
+/**
+ * ANZA PWA Web App Manifest
+ * 
+ * Purpose: Defines PWA configuration for installability
+ * - Application name and short name for home screen display
+ * - Icons for different device sizes (192x192, 512x512, Apple touch icon)
+ * - Theme and background colors for app chrome
+ * - Display mode: standalone (app-like experience without browser UI)
+ * - Start URL: root of application
+ * - Orientation: portrait-primary for mobile optimization
+ */
+{
+  "name": "ANZA — License creator content, prove the agreement",
+  "short_name": "ANZA",
+  "description": "ANZA helps creators publish licensing offers, explain usage rights, get paid, and keep proof of work without giving files away for free.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

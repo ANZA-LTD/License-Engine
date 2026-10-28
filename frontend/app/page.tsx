@@ -1,10 +1,35 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { siteUrl } from "@/lib/site";
+
+// Homepage SEO: this is the primary public entry point and should rank clearly
+// for creator licensing and proof-of-work search intent.
+export const metadata: Metadata = {
+  title: "Creator licensing offers and proof of work",
+  description:
+    "Publish clear licensing offers, explain usage rights, get paid, and keep proof of work without giving away files for free.",
+  alternates: { canonical: "/" },
+  openGraph: {
+    title: "Creator licensing offers and proof of work",
+    description:
+      "Publish clear licensing offers, explain usage rights, get paid, and keep proof of work without giving away files for free.",
+    url: siteUrl,
+    siteName: "ANZA",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Creator licensing offers and proof of work",
+    description:
+      "Publish clear licensing offers, explain usage rights, get paid, and keep proof of work without giving away files for free.",
+  },
+};
+
 /*
   Landing page
   The app's public landing screen. Contains a hero, condensed "How it works"
   section, and a sample content card. Optimized to fit within the viewport
   for demo purposes.
 */
-import Link from "next/link";
 import {
   ArrowRight,
   FilePlus,
