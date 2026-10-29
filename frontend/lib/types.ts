@@ -75,6 +75,7 @@ export interface OfferStatusResponse {
   licenseNostrEventId?: string;
   licensedAt?: string;
   paymentSettledAt?: number;
+  purchaseId?: string;
 }
 
 export interface PurchaseStatusResponse {

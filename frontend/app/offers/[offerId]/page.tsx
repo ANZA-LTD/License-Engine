@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle, ExternalLink, Calendar } from "lucide-react";
+import { CheckCircle, ExternalLink, Calendar, Download } from "lucide-react";
 import { Navbar } from "@/components/layout/Navbar";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -10,7 +10,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ContentPreview } from "@/components/offer/ContentPreview";
 import { VerificationCard } from "@/components/offer/VerificationCard";
 import { LicenseDetails } from "@/components/offer/LicenseDetails";
-import { getMyOffer, getOffer } from "@/lib/api";
+import { getMyOffer, getOffer, issueDownloadGrant, consumeDownloadGrant } from "@/lib/api";
 import { Offer } from "@/lib/types";
 
 /**
@@ -224,6 +224,8 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
 
 /** Screen 5 — spec section 18/19 */
 function LicensedView({ offer }: { offer: Offer }) {
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const licensedDate = offer.licensedAt
     ? new Date(offer.licensedAt).toLocaleDateString("en-US", {
         day: "numeric",
@@ -231,6 +233,31 @@ function LicensedView({ offer }: { offer: Offer }) {
         year: "numeric",
       })
     : "—";
+
+  const handleDownload = async () => {
+    if (!offer.purchaseId) {
+      setDownloadError("Purchase details not available for download.");
+      return;
+    }
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      const grant = await issueDownloadGrant(offer.purchaseId, offer.offerId);
+      const result = await consumeDownloadGrant(grant.grantToken);
+      // Trigger download
+      const link = document.createElement("a");
+      link.href = result.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <main>
@@ -257,6 +284,21 @@ function LicensedView({ offer }: { offer: Offer }) {
           </div>
 
           <div className="mt-6 border-t border-border pt-6">
+            <Button fullWidth onClick={handleDownload} disabled={downloading || !offer.purchaseId}>
+              <Download size={16} className="mr-2" />
+              {downloading ? "Preparing download..." : "Download Original (Unwatermarked)"}
+            </Button>
+            {downloadError && (
+              <p className="mt-2 text-sm text-red-600">{downloadError}</p>
+            )}
+            {offer.purchaseId && (
+              <p className="mt-2 text-xs text-text-secondary text-center">
+                Downloads the original, unwatermarked file.
+              </p>
+            )}
+          </div>
+
+          <div className="mt-6 border-t border-border pt-6">
             <p className="mb-3 text-sm font-semibold text-text-primary">
               Public Verification
             </p>
@@ -279,11 +321,6 @@ function LicensedView({ offer }: { offer: Offer }) {
                     {offer.licenseNostrEventId.slice(0, 20)}...
                   </code>
                 </div>
-                {/*
-                  BACKEND/PRODUCT TEAM: point this at a real Nostr explorer,
-                  e.g. `https://njump.me/${offer.licenseNostrEventId}`, once
-                  events are actually published to a relay.
-                */}
                 <a
                   href={`https://njump.me/${offer.licenseNostrEventId}`}
                   target="_blank"
