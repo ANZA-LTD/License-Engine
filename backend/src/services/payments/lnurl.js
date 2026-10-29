@@ -18,9 +18,15 @@ function isPublicIpv4(address) {
     (a === 203 && b === 0 && c === 113) || a >= 240);
 }
 
-function publicHttpsUrl(value) {
+function publicHttpsUrl(value, base) {
   let url;
-  try { url = new URL(value); } catch { throw new HttpError(502, 'LIGHTNING_ADDRESS_INVALID', 'The Lightning Address returned an invalid HTTPS URL.'); }
+  try {
+    if (base) {
+      url = new URL(value, base);
+    } else {
+      url = new URL(value);
+    }
+  } catch { throw new HttpError(502, 'LIGHTNING_ADDRESS_INVALID', 'The Lightning Address returned an invalid HTTPS URL.'); }
   if (url.protocol !== 'https:' || url.username || url.password || url.hash || (url.port && url.port !== '443') ||
       !url.hostname.includes('.') || isIP(url.hostname) || /\.(localhost|local|internal|test|invalid|example)$/i.test(url.hostname)) {
     throw new HttpError(502, 'LIGHTNING_ADDRESS_INVALID', 'The Lightning Address returned an unsafe HTTPS URL.');
@@ -88,8 +94,9 @@ export function parseLightningAddress(input) {
 
 export async function resolveLightningAddress(input, options) {
   const address = parseLightningAddress(input);
-  const response = await requestPublicJson(`https://${address.domain}/.well-known/lnurlp/${encodeURIComponent(address.username)}`, options);
-  const callback = publicHttpsUrl(response?.callback);
+  const lnurlpUrl = `https://${address.domain}/.well-known/lnurlp/${encodeURIComponent(address.username)}`;
+  const response = await requestPublicJson(lnurlpUrl, options);
+  const callback = publicHttpsUrl(response?.callback, lnurlpUrl);
   if (response?.allowsNostr !== true || !/^[0-9a-f]{64}$/.test(String(response?.nostrPubkey || '')) ||
       !Number.isSafeInteger(response.minSendable) || !Number.isSafeInteger(response.maxSendable) ||
       response.minSendable < 1 || response.maxSendable < response.minSendable) {
