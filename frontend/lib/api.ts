@@ -14,7 +14,7 @@ import {
 import { LICENSE_TYPE_DESCRIPTIONS, LICENSE_TYPE_LABELS } from "./licenseTypes";
 import { sha256Hex, signHttpAuthorization, signOfferEvent } from "./nostr";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 
 type Method = "GET" | "POST" | "DELETE";
 
