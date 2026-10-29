@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { CheckCircle, ExternalLink, Calendar } from "lucide-react";
+import { CheckCircle, ExternalLink, Calendar, Download } from "lucide-react";
 import { Navbar } from "@/components/layout/Navbar";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -10,7 +10,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ContentPreview } from "@/components/offer/ContentPreview";
 import { VerificationCard } from "@/components/offer/VerificationCard";
 import { LicenseDetails } from "@/components/offer/LicenseDetails";
-import { getMyOffer, getOffer } from "@/lib/api";
+import { getMyOffer, getOffer, issueDownloadGrant, consumeDownloadGrant } from "@/lib/api";
 import { Offer } from "@/lib/types";
 
 /**
@@ -224,6 +224,9 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
 
 /** Screen 5 — spec section 18/19 */
 function LicensedView({ offer }: { offer: Offer }) {
+  const [downloadStatus, setDownloadStatus] = useState<"idle" | "downloading" | "success" | "error">("idle");
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const autoAttempted = useRef(false);
   const licensedDate = offer.licensedAt
     ? new Date(offer.licensedAt).toLocaleDateString("en-US", {
         day: "numeric",
@@ -231,6 +234,57 @@ function LicensedView({ offer }: { offer: Offer }) {
         year: "numeric",
       })
     : "—";
+
+  const triggerFileDownload = async (grantToken: string): Promise<void> => {
+    const result = await consumeDownloadGrant(grantToken);
+    const link = document.createElement("a");
+    link.href = result.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const initiateDownload = async (allowExpiryRetry: boolean) => {
+    if (!offer.purchaseId) {
+      setDownloadError("Purchase details not available for download.");
+      setDownloadStatus("error");
+      return;
+    }
+    setDownloadStatus("downloading");
+    setDownloadError(null);
+    try {
+      const grant = await issueDownloadGrant(offer.purchaseId, offer.offerId);
+      await triggerFileDownload(grant.grantToken);
+      setDownloadStatus("success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Download failed";
+      const isExpiredOrMissing = /expired|not found|revoked/i.test(message);
+      if (allowExpiryRetry && isExpiredOrMissing) {
+        try {
+          const grant = await issueDownloadGrant(offer.purchaseId, offer.offerId);
+          await triggerFileDownload(grant.grantToken);
+          setDownloadStatus("success");
+          return;
+        } catch (retryError) {
+          setDownloadError(retryError instanceof Error ? retryError.message : "Download failed");
+          setDownloadStatus("error");
+          return;
+        }
+      }
+      setDownloadError(message);
+      setDownloadStatus("error");
+    }
+  };
+
+  // Automatically start the download once the license is granted and this view mounts.
+  // A manual button below remains as a fallback if the browser blocks the automatic download.
+  useEffect(() => {
+    if (autoAttempted.current) return;
+    autoAttempted.current = true;
+    initiateDownload(true);
+  }, [offer.purchaseId, offer.offerId]);
 
   return (
     <main>
@@ -257,6 +311,30 @@ function LicensedView({ offer }: { offer: Offer }) {
           </div>
 
           <div className="mt-6 border-t border-border pt-6">
+            <Button fullWidth onClick={() => initiateDownload(false)} disabled={downloadStatus === "downloading" || !offer.purchaseId}>
+              <Download size={16} className="mr-2" />
+              {downloadStatus === "downloading" ? "Preparing download…"
+                : downloadStatus === "success" ? "Download complete"
+                : "Download Original (Unwatermarked)"}
+            </Button>
+            {downloadError && (
+              <p className="mt-2 text-sm text-red-600" role="alert">
+                {downloadError}. Use the button above to retry.
+              </p>
+            )}
+            {downloadStatus === "success" && (
+              <p className="mt-2 text-xs text-text-secondary text-center">
+                Your download should start automatically. Use the button above to retry if it does not.
+              </p>
+            )}
+            {offer.purchaseId && downloadStatus === "idle" && (
+              <p className="mt-2 text-xs text-text-secondary text-center">
+                Downloads the original, unwatermarked file.
+              </p>
+            )}
+          </div>
+
+          <div className="mt-6 border-t border-border pt-6">
             <p className="mb-3 text-sm font-semibold text-text-primary">
               Public Verification
             </p>
@@ -279,11 +357,6 @@ function LicensedView({ offer }: { offer: Offer }) {
                     {offer.licenseNostrEventId.slice(0, 20)}...
                   </code>
                 </div>
-                {/*
-                  BACKEND/PRODUCT TEAM: point this at a real Nostr explorer,
-                  e.g. `https://njump.me/${offer.licenseNostrEventId}`, once
-                  events are actually published to a relay.
-                */}
                 <a
                   href={`https://njump.me/${offer.licenseNostrEventId}`}
                   target="_blank"

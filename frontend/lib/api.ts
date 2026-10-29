@@ -33,8 +33,10 @@ type BackendOffer = {
   };
   status: "draft" | "publishing" | "published" | "licensed";
   event_id: string | null;
+  license_event_id?: string;
+  licensed_at?: string | number;
   video_id?: string;
-  payment?: { status?: "pending" | "settled" | "attested"; settled_at?: number };
+  payment?: { status?: "pending" | "settled" | "attested"; settled_at?: number; purchase_id?: string; purchaseId?: string };
 };
 
 function idempotencyKey() { return crypto.randomUUID().replaceAll("-", ""); }
@@ -101,6 +103,10 @@ function fromBackend(offer: BackendOffer): Offer {
       : offer.payment?.status === "settled" ? "PAYMENT_SETTLED" : offer.payment?.status === "pending" ? "PAYMENT_PENDING" : "OPEN",
     nostrEventId: offer.event_id ?? "Pending relay acknowledgement",
     ...(offer.payment?.settled_at ? { paymentSettledAt: offer.payment.settled_at } : {}),
+    ...(offer.licensed_at ? { licensedAt: offer.licensed_at } : {}),
+    ...(offer.license_event_id ? { licenseNostrEventId: offer.license_event_id } : {}),
+    ...(offer.payment?.purchase_id ? { purchaseId: offer.payment.purchase_id } : {}),
+    ...(offer.payment?.purchaseId ? { purchaseId: offer.payment.purchaseId } : {}),
     creatorHandle: creatorHandle(offer.creator_pubkey) };
 }
 async function waitForPublication(offerId: string): Promise<BackendOffer> {
@@ -224,4 +230,26 @@ export async function getOfferStatus(offerId: string): Promise<OfferStatusRespon
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json() as Promise<OfferStatusResponse>;
 }
+
+export async function issueDownloadGrant(purchaseId: string, offerId: string): Promise<{ grantToken: string; expiresAt: number }> {
+  const credentials = purchaseCredentials(offerId);
+  const response = await fetch(apiUrl(`/purchases/${purchaseId}/download-grant`), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": credentials.idempotencyKey,
+      "X-Purchase-Token": credentials.accessToken,
+    },
+    body: "{}",
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export async function consumeDownloadGrant(grantToken: string): Promise<{ url: string; expiresAt: number }> {
+  const response = await fetch(apiUrl(`/downloads/${grantToken}`));
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
 export { LICENSE_TYPE_LABELS, LICENSE_TYPE_DESCRIPTIONS };

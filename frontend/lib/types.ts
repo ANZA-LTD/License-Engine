@@ -27,11 +27,13 @@ export interface Offer {
   nostrEventId: string;
   creatorHandle: string;
   /** Only present once status === "LICENSED" */
-  licensedAt?: string;
+  licensedAt?: string | number;
   /** Nostr event id of the license/payment confirmation event (kind: license_purchase) */
   licenseNostrEventId?: string;
   /** Unix timestamp from LND once the Lightning invoice settles. */
   paymentSettledAt?: number;
+  /** Present once status === "LICENSED" and a purchase was created. */
+  purchaseId?: string;
 }
 
 /** Body of POST /api/offers */
@@ -75,6 +77,7 @@ export interface OfferStatusResponse {
   licenseNostrEventId?: string;
   licensedAt?: string;
   paymentSettledAt?: number;
+  purchaseId?: string;
 }
 
 export interface PurchaseStatusResponse {
