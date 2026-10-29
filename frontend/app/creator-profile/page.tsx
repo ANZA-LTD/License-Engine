@@ -184,6 +184,13 @@ export default function CreatorProfilePage() {
                   </p>
                 </div>
 
+                {/* This Onboard button will take the creator to the Why Onboard page in client. */}
+                <button
+                  type="button"
+                  className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-700"
+                >
+                  Onboard
+                </button>
                 <button
                   type="button"
                   disabled={state !== "ready"}
