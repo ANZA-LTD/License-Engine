@@ -10,7 +10,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ContentPreview } from "@/components/offer/ContentPreview";
 import { VerificationCard } from "@/components/offer/VerificationCard";
 import { LicenseDetails } from "@/components/offer/LicenseDetails";
-import { getMyOffer, getOffer, issueDownloadGrant, consumeDownloadGrant } from "@/lib/api";
+import { getMyOffer, getOffer, issueDownloadGrant, consumeDownloadGrant, getStoredPurchaseId } from "@/lib/api";
 import { Offer } from "@/lib/types";
 
 /**
@@ -247,7 +247,8 @@ function LicensedView({ offer }: { offer: Offer }) {
   };
 
   const initiateDownload = async (allowExpiryRetry: boolean) => {
-    if (!offer.purchaseId) {
+    const purchaseIdForDownload = offer.purchaseId ?? getStoredPurchaseId(offer.offerId);
+    if (!purchaseIdForDownload) {
       setDownloadError("Purchase details not available for download.");
       setDownloadStatus("error");
       return;
@@ -255,7 +256,7 @@ function LicensedView({ offer }: { offer: Offer }) {
     setDownloadStatus("downloading");
     setDownloadError(null);
     try {
-      const grant = await issueDownloadGrant(offer.purchaseId, offer.offerId);
+      const grant = await issueDownloadGrant(purchaseIdForDownload, offer.offerId);
       await triggerFileDownload(grant.grantToken);
       setDownloadStatus("success");
     } catch (error) {
@@ -263,7 +264,7 @@ function LicensedView({ offer }: { offer: Offer }) {
       const isExpiredOrMissing = /expired|not found|revoked/i.test(message);
       if (allowExpiryRetry && isExpiredOrMissing) {
         try {
-          const grant = await issueDownloadGrant(offer.purchaseId, offer.offerId);
+          const grant = await issueDownloadGrant(purchaseIdForDownload, offer.offerId);
           await triggerFileDownload(grant.grantToken);
           setDownloadStatus("success");
           return;
@@ -311,7 +312,7 @@ function LicensedView({ offer }: { offer: Offer }) {
           </div>
 
           <div className="mt-6 border-t border-border pt-6">
-            <Button fullWidth onClick={() => initiateDownload(false)} disabled={downloadStatus === "downloading" || !offer.purchaseId}>
+            <Button fullWidth onClick={() => initiateDownload(false)} disabled={downloadStatus === "downloading" || !(offer.purchaseId || getStoredPurchaseId(offer.offerId))}>
               <Download size={16} className="mr-2" />
               {downloadStatus === "downloading" ? "Preparing download…"
                 : downloadStatus === "success" ? "Download complete"
