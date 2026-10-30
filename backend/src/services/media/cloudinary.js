@@ -34,7 +34,7 @@ export function signedDeliveryUrl({ cloudName, publicId, transformation = [], fo
     resource_type: RESOURCE_TYPE,
     type: 'authenticated',
     format,
-    transformation: transformation.length ? [transformation.join(',')] : undefined,
+    raw_transformation: transformation.length ? transformation.join(',') : undefined,
     sign_url: true,
   });
 }
