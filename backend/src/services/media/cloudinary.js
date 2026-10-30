@@ -14,7 +14,7 @@ export const ALLOWED_FORMATS = ['mp4', 'webm', 'mov'];
 // are configured. The unrestricted original is never built here for discovery use.
 const PREVIEW = ['w_640', 'h_360', 'c_fill', 'q_auto',
   'l_text:Arial_36_bold:ANZA%20PREVIEW', 'co_white', 'o_40', 'fl_layer_apply'];
-const THUMBNAIL = ['so_0', 'w_480', 'h_270', 'c_fill', 'q_auto', 'f_jpg'];
+const THUMBNAIL = ['w_480', 'h_270', 'c_fill', 'q_auto', 'f_jpg'];
 
 // Media reference fields shared by a stored video and the URL builders below.
 export const mediaRef = video => ({ cloudName: video.cloud_name, publicId: video.public_id, format: video.format });
