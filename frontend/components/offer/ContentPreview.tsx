@@ -27,7 +27,7 @@
 export type WatermarkOrientation = "landscape" | "portrait" | "square";
 
 const CLOUDINARY_UPLOAD_RE =
-  /^(https?:\/\/res\.cloudinary\.com\/[^\/]+\/[a-z]+\/upload\/)(.*)$/;
+  /^(https?:\/\/res\.cloudinary\.com\/[^\/]+\/[a-z]+\/upload\/)(?:[^\/]*\/)*(.*)$/;
 
 /**
  * Resolves which watermark public id to use for a given orientation.
@@ -63,9 +63,13 @@ export function toWatermarkedPreview(
   if (!watermark) return url;
   const match = CLOUDINARY_UPLOAD_RE.exec(url);
   if (!match) return url;
-  const [, prefix, rest] = match;
+  const [, prefix, publicId] = match;
+  // Strip any pre-existing transformation segments (w_640,h_360,c_fill,...)
+  // from the original preview_url and rebuild from just the base public ID,
+  // so the watermark overlay is the only transformation applied.
+  // e.g. /upload/l_<watermark>,w_0.25,o_40,g_center/contentport/videos/abc.mp4
   const overlay = `l_${watermark},w_0.25,o_40,g_center/`;
-  return `${prefix}${overlay}${rest}`;
+  return `${prefix}${overlay}${publicId}`;
 }
 
 /**
