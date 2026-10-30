@@ -27,7 +27,18 @@
 export type WatermarkOrientation = "landscape" | "portrait" | "square";
 
 const CLOUDINARY_UPLOAD_RE =
-  /^(https?:\/\/res\.cloudinary\.com\/[^\/]+\/[a-z]+\/upload\/)(?:[^\/]*\/)*(.*)$/;
+  /^(https?:\/\/res\.cloudinary\.com\/[^\/]+\/[a-z]+\/upload\/)(.*)$/;
+
+/**
+ * Detects whether a Cloudinary URL path segment is a transformation
+ * instruction (w_640, c_fill, q_auto, fl_layer_apply, l_text:..., etc.)
+ * rather than a folder name in the public ID path (contentport, videos, ...).
+ * Transformation segments match 1-3 letters followed by an underscore, or
+ * contain a colon (text overlays, color values). Folder names do not.
+ */
+function isCloudinaryTransformation(segment: string): boolean {
+  return /^[a-z]{1,3}_/i.test(segment) || segment.includes(':');
+}
 
 /**
  * Resolves which watermark public id to use for a given orientation.
@@ -61,13 +72,29 @@ export function toWatermarkedPreview(
 ): string {
   const watermark = resolveWatermarkId(orientation);
   if (!watermark) return url;
-  const match = CLOUDINARY_UPLOAD_RE.exec(url);
-  if (!match) return url;
-  const [, prefix, publicId] = match;
-  // Strip any pre-existing transformation segments (w_640,h_360,c_fill,...)
-  // from the original preview_url and rebuild from just the base public ID,
-  // so the watermark overlay is the only transformation applied.
-  // e.g. /upload/l_<watermark>,w_0.25,o_40,g_center/contentport/videos/abc.mp4
+
+  const uploadMarker = '/upload/';
+  const uploadIdx = url.indexOf(uploadMarker);
+  if (uploadIdx === -1) return url;
+
+  const prefix = url.slice(0, uploadIdx + uploadMarker.length);
+  const afterUpload = url.slice(uploadIdx + uploadMarker.length);
+
+  const segments = afterUpload.split('/');
+
+  // Find the first segment that is NOT a Cloudinary transformation — that's
+  // where the public ID path (contentport/videos/...) begins. All segments
+  // before it (w_640, c_fill, fl_layer_apply, ...) are stripped so the
+  // watermark overlay becomes the only transformation applied.
+  let publicIdStart = 0;
+  for (let i = 0; i < segments.length; i++) {
+    if (!isCloudinaryTransformation(segments[i])) {
+      publicIdStart = i;
+      break;
+    }
+  }
+
+  const publicId = segments.slice(publicIdStart).join('/');
   const overlay = `l_${watermark},w_0.25,o_40,g_center/`;
   return `${prefix}${overlay}${publicId}`;
 }
