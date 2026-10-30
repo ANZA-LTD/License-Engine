@@ -46,9 +46,9 @@ export const previewUrl = (media, format, watermark) => {
     // configured image watermark overlay before fl_layer_apply applies layers.
     const textIndex = transformations.findIndex(t => t.startsWith('l_text:'));
     if (textIndex !== -1) {
-      transformations.splice(textIndex, 3, `l_${watermark},w_0.25,o_40,g_center`);
+      transformations.splice(textIndex, 3, `l_${watermark},w_0.25,o_40`);
     } else {
-      transformations.unshift(`l_${watermark},w_0.25,o_40,g_center`);
+      transformations.unshift(`l_${watermark},w_0.25,o_40`);
     }
   }
   return signedDeliveryUrl({ ...media, transformation: transformations, format: format || media.format || 'mp4' });
@@ -57,7 +57,7 @@ export const previewUrl = (media, format, watermark) => {
 export const thumbnailUrl = (media, format, watermark) => {
   const transformations = [...THUMBNAIL];
   if (watermark) {
-    transformations.push(`l_${watermark},w_0.25,o_40,g_center`, 'fl_layer_apply');
+    transformations.push(`l_${watermark},w_0.25,o_40`, 'fl_layer_apply');
   }
   return signedDeliveryUrl({ ...media, transformation: transformations, format: format || media.format || 'mp4' });
 };
