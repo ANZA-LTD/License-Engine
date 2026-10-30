@@ -36,6 +36,8 @@ type BackendOffer = {
   license_event_id?: string;
   licensed_at?: string | number;
   video_id?: string;
+  preview_url?: string;
+  thumbnail_url?: string | null;
   payment?: { status?: "pending" | "settled" | "attested"; settled_at?: number; purchase_id?: string; purchaseId?: string };
 };
 
