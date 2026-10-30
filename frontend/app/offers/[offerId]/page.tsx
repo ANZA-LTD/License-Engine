@@ -94,7 +94,7 @@ function PublicOfferView({ offer }: { offer: Offer }) {
       <Navbar backHref="/" verified />
       <div className="mx-auto max-w-3xl px-6 py-10">
         <div className="grid grid-cols-1 gap-8 sm:grid-cols-2">
-          <ContentPreview url={offer.contentUrl} title={offer.title} />
+          <ContentPreview url={offer.preview_url ?? offer.contentUrl} title={offer.title} />
           <div>
             <h1 className="text-2xl font-bold text-text-primary">{offer.title}</h1>
             <p className="mt-1 text-sm text-text-secondary">
@@ -178,7 +178,7 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
 
         <Card className="mt-8 text-left">
           <div className="flex items-center gap-4">
-            <ContentPreview url={offer.contentUrl} title={offer.title} size="small" />
+            <ContentPreview url={offer.preview_url ?? offer.contentUrl} title={offer.title} size="small" />
             <div>
               <p className="font-semibold text-text-primary">{offer.title}</p>
               <p className="mt-1 text-sm text-text-secondary">License payment receipt</p>
@@ -299,7 +299,7 @@ function LicensedView({ offer }: { offer: Offer }) {
 
         <Card className="mt-8 text-left">
           <div className="flex items-center gap-4">
-            <ContentPreview url={offer.contentUrl} title={offer.title} size="small" />
+            <ContentPreview url={offer.preview_url ?? offer.contentUrl} title={offer.title} size="small" />
             <p className="font-semibold text-text-primary">{offer.title}</p>
           </div>
 
