@@ -79,7 +79,7 @@ function signaturePayload(params) {
 }
 
 export function createCloudinary({ cloudName, apiKey, apiSecret, folder, watermarkLandscape, watermarkPortrait }) {
-  if (!cloudName || !apiKey || apiSecret) return null;
+  if (!cloudName || !apiKey || !apiSecret) return null;
   cloudinarySdk.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret });
   const root = `${folder.replace(/\/+$/, '')}/`;
   return {
