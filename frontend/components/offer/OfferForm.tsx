@@ -7,7 +7,7 @@ import { Input, Textarea, Select } from "@/components/ui/FormFields";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { createOffer, getMyVideo } from "@/lib/api";
-import { LicenseType, CreateOfferPayload } from "@/lib/types";
+import { LicenseType, CreateOfferPayload, OfferSummary } from "@/lib/types";
 import { probeSigner, SignerProbe } from "@/lib/nostr";
 import { canCreateOfferFromUploadedVideo } from "@/lib/offerAccess";
 import {
@@ -50,6 +50,10 @@ export function OfferForm() {
   const [submitting, setSubmitting] = useState(false);
   const [signer, setSigner] = useState<SignerProbe | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Set once the linked video loads. When the video already carries an offer
+  // (live or draft), re-creation is blocked so the creator can't publish a
+  // duplicate for content that is already offered.
+  const [existingOffer, setExistingOffer] = useState<OfferSummary | null>(null);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -99,6 +103,14 @@ export function OfferForm() {
           // Shown for context only. The server re-derives this value itself.
           contentUrl: owned.preview_url,
         }));
+        const existing = owned.offers.find(
+          (o) =>
+            o.status === "published" ||
+            o.status === "licensing" ||
+            o.status === "draft" ||
+            o.status === "publishing",
+        );
+        setExistingOffer(existing ?? null);
       })
       .catch((cause) => {
         if (cancelled) return;
@@ -210,6 +222,27 @@ export function OfferForm() {
           className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
         >
           Go to My Videos
+        </Link>
+      </Card>
+    );
+  }
+
+  if (existingOffer) {
+    return (
+      <Card>
+        <h2 className="mb-2 text-lg font-semibold text-text-primary">
+          An offer already exists for this video
+        </h2>
+        <p className="mb-4 text-sm text-text-secondary">
+          A licensing offer for{" "}
+          <span className="font-medium">{linkedVideo?.title ?? "this video"}</span>
+          already exists, so a new one cannot be created from it.
+        </p>
+        <Link
+          href={`/offers/${existingOffer.offer_id}`}
+          className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
+        >
+          View existing offer
         </Link>
       </Card>
     );
