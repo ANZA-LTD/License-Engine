@@ -280,6 +280,8 @@ function VideoCard({
           src={entry.preview_url}
           poster={entry.thumbnail_url}
           muted
+          autoPlay
+          loop
           playsInline
           className="h-44 w-full object-cover"
         />
