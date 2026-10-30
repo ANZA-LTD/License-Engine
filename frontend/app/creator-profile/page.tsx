@@ -276,9 +276,11 @@ function VideoCard({
   return (
     <article className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
       <div className="relative">
-        <img
-          src={entry.thumbnail_url}
-          alt={video.title}
+        <video
+          src={entry.preview_url}
+          poster={entry.thumbnail_url}
+          muted
+          playsInline
           className="h-44 w-full object-cover"
         />
         <span className="absolute bottom-3 right-3 rounded-md bg-slate-900/80 px-2 py-1 text-[11px] font-semibold text-white">
