@@ -190,14 +190,21 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
     // the projection carries a watermarked preview rather than the original.
     async discover() {
       const rows = await store.listDiscoverableOffers(DISCOVERY_LIMIT);
+      const watermarkFor = (video) => {
+        if (!video || !video.width || !video.height) return cloudinary.watermarkLandscape;
+        return video.height > video.width
+          ? cloudinary.watermarkPortrait
+          : cloudinary.watermarkLandscape;
+      };
       return { status: 200, body: { offers: rows.map(({ offer, video }) => {
         const media = video ? mediaRef(video) : null;
+        const watermark = media ? watermarkFor(video) : null;
         return {
           offer_id: offer.id, video_id: offer.video_id ?? null,
           title: offer.terms.title ?? null, description: offer.terms.description ?? null,
           creator_public_key: offer.creator_pubkey,
-          preview_url: media ? previewUrl(media) : offer.terms.content_url,
-          thumbnail_url: media ? thumbnailUrl(media) : null,
+          preview_url: media ? previewUrl(media, undefined, watermark) : offer.terms.content_url,
+          thumbnail_url: media ? thumbnailUrl(media, undefined, watermark) : null,
           duration_seconds: video?.duration_seconds ?? null,
           license_duration: offer.terms.duration, price_sats: offer.terms.amount_sats,
           status: offer.status, created_at: offer.created_at
