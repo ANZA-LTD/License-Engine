@@ -53,11 +53,15 @@ function readCloudinary(env) {
   const apiKey = env.CLOUDINARY_API_KEY?.trim() || null;
   const apiSecret = env.CLOUDINARY_API_SECRET?.trim() || null;
   const folder = (env.CLOUDINARY_FOLDER?.trim() || 'contentport/videos').replace(/\/+$/, '');
+  const watermarkLandscape = env.CLOUDINARY_WATERMARK_LANDSCAPE?.trim() || null;
+  const watermarkPortrait = env.CLOUDINARY_WATERMARK_PORTRAIT?.trim() || null;
   if (cloudName && !/^[A-Za-z0-9_-]{1,64}$/.test(cloudName)) throw new Error('CLOUDINARY_CLOUD_NAME contains invalid characters');
   if (apiKey && !/^[A-Za-z0-9_-]{1,64}$/.test(apiKey)) throw new Error('CLOUDINARY_API_KEY contains invalid characters');
   if (apiSecret && !/^[\x21-\x7e]{8,128}$/.test(apiSecret)) throw new Error('CLOUDINARY_API_SECRET must be 8-128 printable ASCII characters');
   if (!/^[A-Za-z0-9_\-/]{1,200}$/.test(folder)) throw new Error('CLOUDINARY_FOLDER contains invalid characters');
-  return { cloudName, apiKey, apiSecret, folder };
+  if (watermarkLandscape && !/^[A-Za-z0-9_\-/]{1,200}$/.test(watermarkLandscape)) throw new Error('CLOUDINARY_WATERMARK_LANDSCAPE contains invalid characters');
+  if (watermarkPortrait && !/^[A-Za-z0-9_\-/]{1,200}$/.test(watermarkPortrait)) throw new Error('CLOUDINARY_WATERMARK_PORTRAIT contains invalid characters');
+  return { cloudName, apiKey, apiSecret, folder, watermarkLandscape, watermarkPortrait };
 }
 
 function readCorsOrigins(env) {
