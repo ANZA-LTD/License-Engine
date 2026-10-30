@@ -96,7 +96,7 @@ async function offerDraftFrom(payload: CreateOfferPayload) {
 function fromBackend(offer: BackendOffer): Offer {
   const type = licenseType(offer.terms.duration);
   return { offerId: offer.id, title: offer.terms.title || "Untitled Content", description: offer.terms.description || offer.terms.usage_rights,
-    contentUrl: offer.terms.content_url, brandName: offer.terms.brand, priceSats: offer.terms.amount_sats,
+    contentUrl: offer.terms.content_url, preview_url: offer.preview_url, thumbnail_url: offer.thumbnail_url, brandName: offer.terms.brand, priceSats: offer.terms.amount_sats,
     creatorLightningAddress: offer.terms.lightning_address,
     licenseType: type, licenseDescription: offer.terms.usage_rights,
     status: offer.status === "licensed" ? "LICENSED" : offer.payment?.status === "attested" ? "PAYMENT_ATTESTED"
