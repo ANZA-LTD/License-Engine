@@ -20,10 +20,16 @@ export function createContentService({ store, cloudinary, now = () => Math.floor
   };
   // Owner-only projection. The original is included here because the caller is
   // the authenticated owner; discovery never calls this.
+  const watermarkFor = (video) => {
+    if (!video.width || !video.height) return cloudinary.watermarkLandscape;
+    return video.height > video.width
+      ? cloudinary.watermarkPortrait
+      : cloudinary.watermarkLandscape;
+  };
   const owned = (video, offers) => ({
     video,
-    preview_url: previewUrl(mediaRef(video)),
-    thumbnail_url: thumbnailUrl(mediaRef(video)),
+    preview_url: previewUrl(mediaRef(video), undefined, watermarkFor(video)),
+    thumbnail_url: thumbnailUrl(mediaRef(video), undefined, watermarkFor(video)),
     original_url: originalUrl(mediaRef(video)),
     offers
   });
