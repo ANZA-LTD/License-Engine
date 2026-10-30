@@ -18,6 +18,8 @@ export interface Offer {
   title: string;
   description: string;
   contentUrl: string;
+  preview_url?: string;
+  thumbnail_url?: string | null;
   brandName: string;
   priceSats: number;
   creatorLightningAddress?: string;
