@@ -29,7 +29,7 @@ export function ContentPreview({
   title: string;
   size?: "large" | "small";
 }) {
-  const isVideo = /\.(mp4|webm|mov)$/i.test(url);
+  const isVideo = /\.(mp4|webm|mov)(\?.*)?$/i.test(url);
   const dimensions =
     size === "large" ? "aspect-video" : "aspect-square h-16 w-16 shrink-0";
 
