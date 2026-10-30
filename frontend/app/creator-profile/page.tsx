@@ -17,6 +17,7 @@ import Link from "next/link";
 import { ArrowUpRight, CheckCircle, FileClock, ShieldCheck, UserCircle2 } from "lucide-react";
 import { Navbar } from "@/components/layout/Navbar";
 import { UploadVideo } from "@/components/content/UploadVideo";
+import { toWatermarkedPreview, videoOrientation } from "@/components/offer/ContentPreview";
 import { formatDuration, listMyVideos, publishOffer } from "@/lib/api";
 import { OfferSummary, OwnedVideo, VideoRecord } from "@/lib/types";
 import { probeSigner, SignerProbe } from "@/lib/nostr";
@@ -185,12 +186,14 @@ export default function CreatorProfilePage() {
                 </div>
 
                 {/* This Onboard button will take the creator to the Why Onboard page in client. */}
-                <button
-                  type="button"
+                <a
+                  href="https://anza-user-interface-172765911669.africa-south1.run.app/why-onboard"
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-700"
                 >
                   Onboard
-                </button>
+                </a>
                 <button
                   type="button"
                   disabled={state !== "ready"}
@@ -270,12 +273,13 @@ function VideoCard({
   const state = cardState(entry.offers);
   const style = STATE_STYLE[state.kind];
   const ready = video.status === "ready";
+  const orientation = videoOrientation(video.width, video.height);
 
   return (
     <article className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
       <div className="relative">
         <img
-          src={entry.thumbnail_url}
+          src={toWatermarkedPreview(entry.thumbnail_url, orientation)}
           alt={video.title}
           className="h-44 w-full object-cover"
         />
