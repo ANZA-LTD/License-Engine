@@ -14,7 +14,7 @@ import { ContentPreview } from "@/components/offer/ContentPreview";
 import { LightningQR } from "@/components/payment/LightningQR";
 import { InvoiceDisplay } from "@/components/payment/InvoiceDisplay";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
-import { createPaymentRequest, getOffer, getOfferStatus, getPurchaseStatus } from "@/lib/api";
+import { createPaymentRequest, getOffer, getOfferStatus, getPurchaseStatus, storePurchaseId } from "@/lib/api";
 import { Offer, PaymentRequestResponse } from "@/lib/types";
 import { LICENSE_TYPE_LABELS } from "@/lib/licenseTypes";
 
@@ -62,6 +62,9 @@ export default function PaymentPage({
         if (cancelled) return;
         setOffer(offerData);
         setPayment(paymentData);
+        if (paymentData?.purchaseId) {
+          storePurchaseId(params.offerId, paymentData.purchaseId);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unable to start payment for this offer.";
         if (!cancelled) setError(message);
@@ -80,9 +83,9 @@ export default function PaymentPage({
 
     pollRef.current = setInterval(async () => {
       try {
-        const status = payment.purchaseId
-          ? await getPurchaseStatus(payment.purchaseId, params.offerId)
-          : await getOfferStatus(params.offerId);
+          const status = payment.purchaseId
+            ? await getPurchaseStatus(payment.purchaseId, params.offerId)
+            : await getOfferStatus(params.offerId);
         setPollError(null);
         if (status.status === "LICENSED" || status.status === "PAYMENT_ATTESTED" || status.status === "PAYMENT_SETTLED") {
           setConfirmed(true);

@@ -206,6 +206,32 @@ function purchaseCredentials(offerId: string) {
   sessionStorage.setItem(key, JSON.stringify(value));
   return value;
 }
+function purchaseMetadataKey(offerId: string) {
+  return `anza:purchase:meta:${offerId}`;
+}
+export function storePurchaseId(offerId: string, purchaseId: string) {
+  if (typeof window === "undefined") return;
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(purchaseId)) return;
+  try {
+    sessionStorage.setItem(purchaseMetadataKey(offerId), JSON.stringify({ purchaseId }));
+  } catch {
+    /* ignore */
+  }
+}
+export function getStoredPurchaseId(offerId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(purchaseMetadataKey(offerId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { purchaseId?: string };
+    if (parsed && typeof parsed.purchaseId === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(parsed.purchaseId)) {
+      return parsed.purchaseId;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
 export async function createPaymentRequest(offerId: string): Promise<PaymentRequestResponse> {
   const credentials = purchaseCredentials(offerId);
   const response = await fetch(apiUrl(`/offers/${offerId}/payment`), {
