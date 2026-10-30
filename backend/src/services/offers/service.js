@@ -216,14 +216,25 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
       if (!stored) throw new HttpError(404, 'NOT_FOUND', 'Offer not found.');
       if (stored.offerId) return { status: 200, body: stored };
       if (!['published', 'licensing', 'licensed'].includes(stored.status) && stored.creator_pubkey !== pubkey) throw new HttpError(404, 'NOT_FOUND', 'Offer not found.');
-      if (stored.creator_pubkey !== pubkey && stored.payment) {
-        const { payment, ...publicOffer } = stored;
+      // Attach a watermarked preview (and thumbnail) when the offer references a
+      // creator-owned video, mirroring the discover projection.
+      let enriched = stored;
+      if (cloudinary && stored.video_id && !stored.preview_url) {
+        const video = await store.getVideo(stored.video_id);
+        if (video) {
+          const media = mediaRef(video);
+          const watermark = (video.height > video.width) ? cloudinary.watermarkPortrait : cloudinary.watermarkLandscape;
+          enriched = { ...stored, preview_url: previewUrl(media, undefined, watermark), thumbnail_url: thumbnailUrl(media, undefined, watermark) };
+        }
+      }
+      if (enriched.creator_pubkey !== pubkey && enriched.payment) {
+        const { payment, ...publicOffer } = enriched;
         return { status: 200, body: { ...publicOffer, payment: {
           status: payment.status,
           ...(payment.settled_at ? { settled_at: payment.settled_at } : {})
         } } };
       }
-      return { status: 200, body: stored };
+      return { status: 200, body: enriched };
     },
     async publish({ id, pubkey, body, key, digest }) {
       input('SignedEvent', body);
