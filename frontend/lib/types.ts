@@ -80,6 +80,8 @@ export interface OfferStatusResponse {
   licensedAt?: string;
   paymentSettledAt?: number;
   purchaseId?: string;
+  downloadGrantToken?: string;
+  downloadGrantExpiresAt?: number;
 }
 
 export interface PurchaseStatusResponse {
