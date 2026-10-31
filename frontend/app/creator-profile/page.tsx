@@ -186,7 +186,13 @@ export default function CreatorProfilePage() {
 
                 {/* This Onboard button will take the creator to the Why Onboard page in client. */}
                 <a
-                  href="https://anza-user-interface-172765911669.africa-south1.run.app/why-onboard"
+                  href={
+                    identity
+                      ? `https://anza-user-interface-172765911669.africa-south1.run.app/why-onboard?pubkey=${encodeURIComponent(
+                          identity,
+                        )}`
+                      : "https://anza-user-interface-172765911669.africa-south1.run.app/why-onboard"
+                  }
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-700"
