@@ -374,7 +374,7 @@ function LicensedView({ offer }: { offer: Offer }) {
                   />
                   <Button
                     onClick={() => initiateDownload(false, manualPurchaseId)}
-                    disabled={!manualPurchaseId || downloadStatus === "downloading"}
+                    disabled={!manualPurchaseId}
                   >
                     Download
                   </Button>
