@@ -27,6 +27,7 @@ jobs:
             --build-arg NEXT_PUBLIC_NOSTR_OFFER_KIND=9998 \
             --build-arg NEXT_PUBLIC_NOSTR_ATTESTOR_PUBKEY=22b55780785d437e3357b4e4c5ad10c8c4c96ed9616bf70a57591948433ec2e1 \
             ./frontend
+      - run: gcloud artifacts repositories describe licence-engine-frontend --location=africa-south1 || gcloud artifacts repositories create licence-engine-frontend --repository-format=docker --location=africa-south1
       - run: docker push africa-south1-docker.pkg.dev/anza-staging/licence-engine-frontend:${{ github.sha }}
       - run: gcloud run deploy licence-engine-frontend \
           --image africa-south1-docker.pkg.dev/anza-staging/licence-engine-frontend:${{ github.sha }} \
