@@ -416,7 +416,9 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         }
         purchaseId = purchase.id;
       }
-      if (externalCredential && /^[0-9a-f]{64}$/.test(externalCredential)) {
+      if (purchaseId !== null) {
+        // Already resolved from the route's id parameter. Skip to grant issuance.
+      } else if (externalCredential && /^[0-9a-f]{64}$/.test(externalCredential)) {
         // External purchase-associated credential: validate against the
         // association registered by the external payment service for this offer.
         const tokenHash = createHash('sha256').update(externalCredential).digest('hex');
@@ -444,7 +446,7 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
           throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
         }
         purchaseId = purchase.id;
-      } else if (purchaseId === null) {
+      } else {
         throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
       }
       const rawToken = randomBytes(32).toString('hex');
