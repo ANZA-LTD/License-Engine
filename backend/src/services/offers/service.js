@@ -405,10 +405,12 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
       // resolve the offer from it.
       if (!offer) {
         const purchase = await store.getZapPurchase(id);
+        console.log('[issueDownloadGrant] getZapPurchase result:', purchase ? { id: purchase.id, offer_id: purchase.offer_id, status: purchase.status } : 'NULL');
         if (!purchase || purchase.status !== 'verified') {
           throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
         }
         offer = await store.getOffer(purchase.offer_id);
+        console.log('[issueDownloadGrant] getOffer result:', offer ? { id: offer.id, status: offer.status, license_event_id: !!offer.license_event_id, video_id: !!offer.video_id } : 'NULL');
         if (!offer || offer.status !== 'licensed' || !offer.license_event_id || !offer.video_id) {
           throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this offer.');
         }
