@@ -359,7 +359,7 @@ function LicensedView({ offer }: { offer: Offer }) {
                 Your download should start automatically. Use the button above to retry if it does not.
               </p>
             )}
-            {!manualPurchaseId && !(offer.purchaseId || getStoredPurchaseId(offer.offerId)) && downloadStatus !== "downloading" && (
+            {!(offer.purchaseId || getStoredPurchaseId(offer.offerId)) && downloadStatus !== "downloading" && (
               <div className="mt-4">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
                   If you purchased this offer, enter your purchase ID to download:
@@ -368,7 +368,8 @@ function LicensedView({ offer }: { offer: Offer }) {
                   <input
                     type="text"
                     value={manualPurchaseId}
-                    onChange={(e) => setManualPurchaseId(e.target.value.trim())}
+                    onChange={(e) => setManualPurchaseId(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && manualPurchaseId) initiateDownload(false, manualPurchaseId); }}
                     placeholder="e.g. f2974692-1b4a-4f7b-a3c9-43eb8c94ad00"
                     className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                   />
