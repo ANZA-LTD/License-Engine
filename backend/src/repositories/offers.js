@@ -1,3 +1,4 @@
+import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { HttpError } from '../utils/errors.js';
 
 export class PostgresOfferStore {
@@ -129,11 +130,20 @@ export class PostgresOfferStore {
     await this.pool.query(`UPDATE zap_purchases SET status = 'failed', updated_at = $2
       WHERE id = $1 AND status = 'creating'`, [id, Math.floor(Date.now() / 1000)]);
   }
-  async issueDownloadGrant({ id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses = 5, externalReference }) {
-    await this.pool.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses, external_reference)
-      VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8,$9)`,
-      [id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses, externalReference || null]);
-    return { id, token_hash: tokenHash };
+  async issueDownloadGrantForPurchase({ offerId, purchaseId, licenseEventId, videoId, expiresInSeconds = 3600, maxUses = 5 }) {
+    const rawToken = randomBytes(32).toString('hex');
+    const grantTokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = Math.floor(Date.now() / 1000) + expiresInSeconds;
+    await this.pool.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses)
+      VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8)
+      ON CONFLICT DO NOTHING`,
+      [randomUUID(), offerId, purchaseId, licenseEventId, videoId, grantTokenHash, expiresAt, maxUses]);
+    return { grantToken: rawToken, expiresAt };
+  }
+
+  async getDownloadGrantForPurchase(purchaseId) {
+    const row = (await this.pool.query('SELECT * FROM download_grants WHERE purchase_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1', [purchaseId])).rows[0];
+    return row || null;
   }
   async registerExternalPurchaseAssociation({ id, offerId, externalReference, credentialTokenHash }) {
     await this.pool.query(`INSERT INTO external_purchase_associations(id, offer_id, external_reference, credential_token_hash)
@@ -180,8 +190,8 @@ export class PostgresOfferStore {
       await client.query('BEGIN');
       const purchase = (await client.query('SELECT * FROM zap_purchases WHERE id = $1 FOR UPDATE', [purchaseId])).rows[0];
       if (!purchase) throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
-      if (purchase.status === 'verified') { await client.query('COMMIT'); return false; }
-      if (purchase.status !== 'pending') { await client.query('COMMIT'); return false; }
+      if (purchase.status === 'verified') { await client.query('COMMIT'); return { verified: false }; }
+      if (purchase.status !== 'pending') { await client.query('COMMIT'); return { verified: false }; }
       const offer = (await client.query('SELECT document FROM offers WHERE id = $1 FOR UPDATE', [purchase.offer_id])).rows[0]?.document;
       if (!offer || offer.event_id !== purchase.offer_event_id || offer.status !== 'published') {
         throw new HttpError(409, 'OFFER_NOT_PURCHASABLE', 'The signed offer is no longer available for licensing.');
@@ -203,8 +213,21 @@ export class PostgresOfferStore {
       await client.query(`UPDATE zap_purchases SET status = 'verified', receipt_event_id = $2,
         receipt_event = $3, settled_at = $4, updated_at = $4 WHERE id = $1`,
       [purchaseId, receiptEvent.id, receiptEvent, settledAt]);
+      // Issue the download grant atomically within the same transaction so the
+      // token is only minted once the purchase is verified and the offer is licensed.
+      let downloadGrant = null;
+      if (nextOffer.video_id) {
+        const rawToken = randomBytes(32).toString('hex');
+        const grantTokenHash = createHash('sha256').update(rawToken).digest('hex');
+        const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+        await client.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses)
+          VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8)
+          ON CONFLICT DO NOTHING`,
+          [randomUUID(), nextOffer.id, purchaseId, licenseEvent.id, nextOffer.video_id, grantTokenHash, expiresAt, 5]);
+        downloadGrant = { grantToken: rawToken, expiresAt };
+      }
       await client.query('COMMIT');
-      return true;
+      return { verified: true, purchase, offer: nextOffer, downloadGrant };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

@@ -132,10 +132,32 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
     } });
     const signed = finalizeEvent(template, attestorSecretKey);
     if (signed.pubkey !== attestorPubkey) throw new HttpError(500, 'ATTESTOR_KEY_MISMATCH', 'The configured attestor key cannot sign this license event.');
-    await store.verifyZapPurchase({
+    const result = await store.verifyZapPurchase({
       purchaseId: purchase.id, receiptEvent: receipt,
       settledAt: evidence.settled_at, licenseEvent: signed
     });
+    // The download grant is now issued atomically inside verifyZapPurchase.
+    // Fall back to issuing one explicitly only if the store did not return it
+    // (e.g. the offer has no video_id yet).
+    if (result?.verified && result?.offer?.status === 'licensing' && result?.offer?.license_event_id && result?.offer?.video_id) {
+      if (!result.downloadGrant) {
+        try {
+          if (typeof store.issueDownloadGrantForPurchase === 'function') {
+            await store.issueDownloadGrantForPurchase({
+              offerId: result.offer.id,
+              purchaseId: purchase.id,
+              licenseEventId: result.offer.license_event_id,
+              videoId: result.offer.video_id,
+              expiresInSeconds: 3600,
+              maxUses: 5
+            });
+          }
+        } catch (e) {
+          // ignore grant issuance errors
+        }
+      }
+    }
+    return result;
   };
   const issueExternalPaymentLicense = async (offer, attestation) => {
     if (!attestorSecretKey) throw new HttpError(503, 'LICENSE_ATTESTOR_NOT_CONFIGURED', 'The license attestor is not configured.');
@@ -333,6 +355,8 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
       const tokenHash = createHash('sha256').update(purchaseToken).digest('hex');
       let purchase = await store.getZapPurchaseForBuyer(id, tokenHash);
       if (!purchase) throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
+      let downloadGrantToken = null;
+      let downloadGrantExpiresAt = null;
       if (purchase.status === 'pending' && Number(purchase.next_receipt_check_at) <= now()) {
         const claimed = await store.claimZapReceiptCheck(id, now());
         if (claimed) {
@@ -345,7 +369,15 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
               console.warn('Rejected NIP-57 receipt candidate', receipt?.id, error.message);
               continue;
             }
-            await issueZapLicense(claimed, receipt, evidence);
+            const result = await issueZapLicense(claimed, receipt, evidence);
+            // The grant is issued atomically inside verifyZapPurchase when the
+            // purchase transitions to verified and the offer has a video_id.
+            // The raw token is only available at this moment; it is stored as a
+            // hash in the database and cannot be retrieved on subsequent polls.
+            if (result?.downloadGrant) {
+              downloadGrantToken = result.downloadGrant.grantToken;
+              downloadGrantExpiresAt = result.downloadGrant.expiresAt;
+            }
             break;
           }
         }
@@ -359,7 +391,8 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
           : purchase.status === 'expired' ? 'EXPIRED' : 'PAYMENT_PENDING',
         receiptState: purchase.status === 'verified' ? 'verified' : 'awaiting_receipt',
         ...(offer?.license_event_id ? { licenseNostrEventId: offer.license_event_id } : {}),
-        ...(offer?.licensed_at ? { licensedAt: offer.licensed_at } : {})
+        ...(offer?.licensed_at ? { licensedAt: offer.licensed_at } : {}),
+        ...(downloadGrantToken ? { downloadGrantToken, downloadGrantExpiresAt } : {})
       } };
     },
     async issueDownloadGrant(id, purchaseToken, externalCredential) {
