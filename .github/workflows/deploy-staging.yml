@@ -28,6 +28,4 @@ jobs:
             --build-arg NEXT_PUBLIC_NOSTR_ATTESTOR_PUBKEY=22b55780785d437e3357b4e4c5ad10c8c4c96ed9616bf70a57591948433ec2e1 \
             ./frontend
       - run: docker push africa-south1-docker.pkg.dev/anza-staging/cloud-run-source-deploy/licence-engine-frontend:${{ github.sha }}
-      - run: gcloud run deploy licence-engine-frontend \
-          --image africa-south1-docker.pkg.dev/anza-staging/cloud-run-source-deploy/licence-engine-frontend:${{ github.sha }} \
-          --region africa-south1 --platform managed --allow-unauthenticated
+      - run: gcloud run deploy licence-engine-frontend --image africa-south1-docker.pkg.dev/anza-staging/cloud-run-source-deploy/licence-engine-frontend:${{ github.sha }} --region africa-south1 --platform managed --allow-unauthenticated
