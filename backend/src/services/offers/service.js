@@ -398,6 +398,8 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
     async issueDownloadGrant(id, purchaseToken, externalCredential) {
       if (!paymentEnabled) throw new HttpError(503, 'PAYMENTS_DISABLED', 'Lightning payments are not enabled in this environment.');
       let offer = await store.getOffer(id);
+      let purchaseId = null;
+      let externalReference = null;
       // When called from /api/purchases/:purchaseId/download-grant, the id is
       // a purchase UUID, not an offer UUID. Look up the purchase first, then
       // resolve the offer from it.
@@ -410,9 +412,8 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         if (!offer || offer.status !== 'licensed' || !offer.license_event_id || !offer.video_id) {
           throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this offer.');
         }
+        purchaseId = purchase.id;
       }
-      let purchaseId = null;
-      let externalReference = null;
       if (externalCredential && /^[0-9a-f]{64}$/.test(externalCredential)) {
         // External purchase-associated credential: validate against the
         // association registered by the external payment service for this offer.
@@ -441,7 +442,7 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
           throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
         }
         purchaseId = purchase.id;
-      } else {
+      } else if (purchaseId === null) {
         throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
       }
       const rawToken = randomBytes(32).toString('hex');
