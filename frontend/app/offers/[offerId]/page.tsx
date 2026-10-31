@@ -226,6 +226,8 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
 function LicensedView({ offer }: { offer: Offer }) {
   const [downloadStatus, setDownloadStatus] = useState<"idle" | "downloading" | "success" | "error">("idle");
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [manualPurchaseId, setManualPurchaseId] = useState<string>("");
+  const [showManualInput, setShowManualInput] = useState(false);
   const autoAttempted = useRef(false);
   const licensedDate = offer.licensedAt
     ? new Date(offer.licensedAt).toLocaleDateString("en-US", {
@@ -261,7 +263,7 @@ function LicensedView({ offer }: { offer: Offer }) {
     return null;
   };
 
-  const initiateDownload = async (allowExpiryRetry: boolean) => {
+  const initiateDownload = async (allowExpiryRetry: boolean, explicitPurchaseId?: string) => {
     setDownloadStatus("downloading");
     setDownloadError(null);
     try {
@@ -273,7 +275,7 @@ function LicensedView({ offer }: { offer: Offer }) {
         return;
       }
       // Fall back to requesting a new grant from the backend.
-      const purchaseIdForDownload = offer.purchaseId ?? getStoredPurchaseId(offer.offerId);
+      const purchaseIdForDownload = explicitPurchaseId || manualPurchaseId || offer.purchaseId || getStoredPurchaseId(offer.offerId);
       if (!purchaseIdForDownload) {
         setDownloadError("Purchase details not available for download.");
         setDownloadStatus("error");
@@ -287,7 +289,7 @@ function LicensedView({ offer }: { offer: Offer }) {
       const isExpiredOrMissing = /expired|not found|revoked/i.test(message);
       if (allowExpiryRetry && isExpiredOrMissing) {
         try {
-          const purchaseIdForDownload = offer.purchaseId ?? getStoredPurchaseId(offer.offerId);
+          const purchaseIdForDownload = manualPurchaseId || offer.purchaseId || getStoredPurchaseId(offer.offerId);
           if (!purchaseIdForDownload) {
             setDownloadError("Purchase details not available for download.");
             setDownloadStatus("error");
@@ -341,7 +343,7 @@ function LicensedView({ offer }: { offer: Offer }) {
           </div>
 
           <div className="mt-6 border-t border-border pt-6">
-            <Button fullWidth onClick={() => initiateDownload(false)} disabled={downloadStatus === "downloading" || !(offer.purchaseId || getStoredPurchaseId(offer.offerId))}>
+            <Button fullWidth onClick={() => initiateDownload(false)} disabled={downloadStatus === "downloading" || (!manualPurchaseId && !(offer.purchaseId || getStoredPurchaseId(offer.offerId)))}>
               <Download size={16} className="mr-2" />
               {downloadStatus === "downloading" ? "Preparing download…"
                 : downloadStatus === "success" ? "Download complete"
@@ -349,7 +351,7 @@ function LicensedView({ offer }: { offer: Offer }) {
             </Button>
             {downloadError && (
               <p className="mt-2 text-sm text-red-600" role="alert">
-                {downloadError}. Use the button above to retry.
+                {downloadError}
               </p>
             )}
             {downloadStatus === "success" && (
@@ -357,10 +359,30 @@ function LicensedView({ offer }: { offer: Offer }) {
                 Your download should start automatically. Use the button above to retry if it does not.
               </p>
             )}
-            {offer.purchaseId && downloadStatus === "idle" && (
-              <p className="mt-2 text-xs text-text-secondary text-center">
-                Downloads the original, unwatermarked file.
-              </p>
+            {!manualPurchaseId && !(offer.purchaseId || getStoredPurchaseId(offer.offerId)) && downloadStatus !== "downloading" && (
+              <div className="mt-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                  If you purchased this offer, enter your purchase ID to download:
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={manualPurchaseId}
+                    onChange={(e) => setManualPurchaseId(e.target.value.trim())}
+                    placeholder="e.g. f2974692-1b4a-4f7b-a3c9-43eb8c94ad00"
+                    className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                  />
+                  <Button
+                    onClick={() => initiateDownload(false, manualPurchaseId)}
+                    disabled={!manualPurchaseId || downloadStatus === "downloading"}
+                  >
+                    Download
+                  </Button>
+                </div>
+                <p className="mt-1 text-xs text-text-secondary">
+                  Your purchase ID was sent to you after payment. It looks like a UUID, e.g. f2974692-1b4a-4f7b-a3c9-43eb8c94ad00.
+                </p>
+              </div>
             )}
           </div>
 

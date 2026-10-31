@@ -423,6 +423,14 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         if (!offerCheck || offerCheck.status !== 'licensed' || !offerCheck.license_event_id || !offerCheck.video_id) {
           throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this purchase.');
         }
+      } else if (typeof purchaseToken === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(purchaseToken)) {
+        // Manual purchase UUID entry: the brand types the purchase ID they
+        // received after payment. Validate it belongs to this offer.
+        const purchase = await store.getZapPurchase(purchaseToken);
+        if (!purchase || purchase.offer_id !== id || purchase.status !== 'verified') {
+          throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
+        }
+        purchaseId = purchase.id;
       } else {
         throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
       }
