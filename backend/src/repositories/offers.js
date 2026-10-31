@@ -141,10 +141,10 @@ export class PostgresOfferStore {
     return { grantToken: rawToken, expiresAt };
   }
   async issueDownloadGrant({ id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses, externalReference = null }) {
-    await this.pool.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses, external_reference)
-      VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8,$9)
+    await this.pool.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses)
+      VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8)
       ON CONFLICT DO NOTHING`,
-      [id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses, externalReference]);
+      [id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses]);
   }
 
   async getDownloadGrantForPurchase(purchaseId) {
