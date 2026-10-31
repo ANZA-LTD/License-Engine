@@ -414,6 +414,7 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         await store.consumeExternalPurchaseAssociation(tokenHash, now());
         externalReference = association.external_reference;
       } else if (typeof purchaseToken === 'string' && /^[0-9a-f]{64}$/.test(purchaseToken)) {
+        // Legacy 64-char hex purchase token: look up the Zap purchase by token hash.
         if (!zapPaymentProvider) throw new HttpError(404, 'NOT_FOUND', 'Download grants are unavailable.');
         const tokenHash = createHash('sha256').update(purchaseToken).digest('hex');
         const purchase = await store.getZapPurchaseForBuyer(id, tokenHash);
@@ -423,6 +424,14 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         if (!offerCheck || offerCheck.status !== 'licensed' || !offerCheck.license_event_id || !offerCheck.video_id) {
           throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this purchase.');
         }
+      } else if (typeof purchaseToken === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(purchaseToken)) {
+        // Direct purchase UUID: the frontend passes the purchase ID from the
+        // offer response. Validate that the purchase belongs to this offer.
+        const purchase = await store.getZapPurchase(purchaseToken);
+        if (!purchase || purchase.offer_id !== id || purchase.status !== 'verified') {
+          throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
+        }
+        purchaseId = purchase.id;
       } else {
         throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
       }
