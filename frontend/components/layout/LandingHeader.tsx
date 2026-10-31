@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
 
 /**
  * Header of the LANDING PAGE ONLY (app/page.tsx).
@@ -89,18 +88,6 @@ export function LandingHeader() {
               Sign in
             </button>
           )}
-
-          <Link
-            href="/create"
-            className="group inline-flex items-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-3 py-2.5 text-[13px] font-semibold text-white shadow-lg shadow-blue-600/30 transition-all duration-200 hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-xl hover:shadow-blue-600/40 active:translate-y-0 sm:px-5 sm:text-sm"
-          >
-            Create an Offer
-            <ArrowRight
-              size={16}
-              aria-hidden="true"
-              className="hidden shrink-0 transition-transform duration-200 group-hover:translate-x-1 min-[400px]:block"
-            />
-          </Link>
         </div>
       </div>
     </header>

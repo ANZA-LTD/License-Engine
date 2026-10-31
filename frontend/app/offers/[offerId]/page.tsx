@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { CheckCircle, ExternalLink, Calendar } from "lucide-react";
+import { CheckCircle, ExternalLink, Calendar, Download } from "lucide-react";
 import { Navbar } from "@/components/layout/Navbar";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -10,7 +10,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ContentPreview } from "@/components/offer/ContentPreview";
 import { VerificationCard } from "@/components/offer/VerificationCard";
 import { LicenseDetails } from "@/components/offer/LicenseDetails";
-import { getMyOffer, getOffer } from "@/lib/api";
+import { getMyOffer, getOffer, issueDownloadGrant, consumeDownloadGrant, getStoredPurchaseId, getStoredDownloadGrant } from "@/lib/api";
 import { Offer } from "@/lib/types";
 
 /**
@@ -82,7 +82,7 @@ export default function OfferPage({ params }: { params: { offerId: string } }) {
   }
 
   if (offer.status === "LICENSED") return <LicensedView offer={offer} />;
-  if (offer.status === "PAYMENT_SETTLED") return <PaymentConfirmedView offer={offer} />;
+  if (offer.status === "PAYMENT_ATTESTED" || offer.status === "PAYMENT_SETTLED") return <PaymentConfirmedView offer={offer} />;
   return <PublicOfferView offer={offer} />;
 }
 
@@ -94,7 +94,7 @@ function PublicOfferView({ offer }: { offer: Offer }) {
       <Navbar backHref="/" verified />
       <div className="mx-auto max-w-3xl px-6 py-10">
         <div className="grid grid-cols-1 gap-8 sm:grid-cols-2">
-          <ContentPreview url={offer.contentUrl} title={offer.title} />
+          <ContentPreview url={offer.preview_url ?? offer.contentUrl} title={offer.title} />
           <div>
             <h1 className="text-2xl font-bold text-text-primary">{offer.title}</h1>
             <p className="mt-1 text-sm text-text-secondary">
@@ -150,13 +150,14 @@ function PublicOfferView({ offer }: { offer: Offer }) {
   );
 }
 
-/** Payment receipt — shown only after the backend confirms the LND settlement. */
+/** Payment evidence view — its wording follows the selected verification policy. */
 function PaymentConfirmedView({ offer }: { offer: Offer }) {
+  const zapReceiptVerified = offer.status === "PAYMENT_ATTESTED";
   const settledDate = offer.paymentSettledAt
     ? new Date(offer.paymentSettledAt * 1000).toLocaleString("en-US", {
         day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit"
       })
-    : "Confirmed by Lightning node";
+    : zapReceiptVerified ? "Receipt timestamp unavailable" : "Confirmed by Lightning node";
 
   return (
     <main>
@@ -164,16 +165,20 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
       <div className="mx-auto max-w-2xl px-6 py-12 text-center">
         <CheckCircle size={56} className="mx-auto text-success" />
         <p className="mt-4 text-sm font-semibold uppercase tracking-[0.18em] text-success">
-          Lightning settlement verified
+          {zapReceiptVerified ? "Creator receipt verified" : "Lightning settlement verified"}
         </p>
-        <h1 className="mt-2 text-3xl font-bold text-text-primary">Payment Confirmed</h1>
+        <h1 className="mt-2 text-3xl font-bold text-text-primary">
+          {zapReceiptVerified ? "Creator payment attested" : "Payment Confirmed"}
+        </h1>
         <p className="mt-2 text-sm text-text-secondary">
-          {offer.priceSats.toLocaleString()} sats has settled to the Creator node.
+          {zapReceiptVerified
+            ? `The creator's Lightning service signed a receipt for ${offer.priceSats.toLocaleString()} sats. This is the service's attestation, not independent proof that funds moved.`
+            : `${offer.priceSats.toLocaleString()} sats settled to the local Lightning node.`}
         </p>
 
         <Card className="mt-8 text-left">
           <div className="flex items-center gap-4">
-            <ContentPreview url={offer.contentUrl} title={offer.title} size="small" />
+            <ContentPreview url={offer.preview_url ?? offer.contentUrl} title={offer.title} size="small" />
             <div>
               <p className="font-semibold text-text-primary">{offer.title}</p>
               <p className="mt-1 text-sm text-text-secondary">License payment receipt</p>
@@ -186,11 +191,15 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
 
           <div className="mt-6 grid grid-cols-1 gap-4 border-t border-border pt-6 sm:grid-cols-2">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Amount settled</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                {zapReceiptVerified ? "Offer amount" : "Amount settled"}
+              </p>
               <p className="mt-1 text-lg font-bold text-text-primary">{offer.priceSats.toLocaleString()} sats</p>
             </div>
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Settlement time</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                {zapReceiptVerified ? "Receipt timestamp" : "Settlement time"}
+              </p>
               <p className="mt-1 text-sm font-medium text-text-primary">{settledDate}</p>
             </div>
           </div>
@@ -203,7 +212,9 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
         <div className="mt-6 rounded-xl border border-border bg-surface p-5 text-left">
           <p className="text-sm font-semibold text-text-primary">License record</p>
           <p className="mt-1 text-sm text-text-secondary">
-            Payment is confirmed. The linked Nostr license attestation will appear here when it is signed and published.
+            {zapReceiptVerified
+              ? "The creator service's signed receipt was accepted under ANZA's payment policy. The linked license attestation will appear here after relay publication."
+              : "The local Lightning node reported settlement. The linked Nostr license attestation will appear here when it is signed and published."}
           </p>
         </div>
       </div>
@@ -213,6 +224,9 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
 
 /** Screen 5 — spec section 18/19 */
 function LicensedView({ offer }: { offer: Offer }) {
+  const [downloadStatus, setDownloadStatus] = useState<"idle" | "downloading" | "success" | "error">("idle");
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const autoAttempted = useRef(false);
   const licensedDate = offer.licensedAt
     ? new Date(offer.licensedAt).toLocaleDateString("en-US", {
         day: "numeric",
@@ -220,6 +234,87 @@ function LicensedView({ offer }: { offer: Offer }) {
         year: "numeric",
       })
     : "—";
+
+  const triggerFileDownload = async (grantToken: string): Promise<void> => {
+    const result = await consumeDownloadGrant(grantToken);
+    const link = document.createElement("a");
+    link.href = result.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Resolve the download grant token in priority order:
+  //   1. Query parameter (set by the pay page polling flow)
+  //   2. sessionStorage (persisted by the pay page polling flow)
+  //   3. issueDownloadGrant API call (legacy fallback)
+  const resolveGrantToken = async (): Promise<string | null> => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search.slice(1));
+      const queryToken = params.get("grantToken");
+      if (queryToken && /^[0-9a-f]{64}$/.test(queryToken)) return queryToken;
+    }
+    const stored = getStoredDownloadGrant(offer.offerId);
+    if (stored && /^[0-9a-f]{64}$/.test(stored.grantToken)) return stored.grantToken;
+    return null;
+  };
+
+  const initiateDownload = async (allowExpiryRetry: boolean) => {
+    setDownloadStatus("downloading");
+    setDownloadError(null);
+    try {
+      // Prefer a pre-issued grant token from the polling flow.
+      const existingToken = await resolveGrantToken();
+      if (existingToken) {
+        await triggerFileDownload(existingToken);
+        setDownloadStatus("success");
+        return;
+      }
+      // Fall back to requesting a new grant from the backend.
+      const purchaseIdForDownload = offer.purchaseId ?? getStoredPurchaseId(offer.offerId);
+      if (!purchaseIdForDownload) {
+        setDownloadError("Purchase details not available for download.");
+        setDownloadStatus("error");
+        return;
+      }
+      const grant = await issueDownloadGrant(purchaseIdForDownload, offer.offerId);
+      await triggerFileDownload(grant.grantToken);
+      setDownloadStatus("success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Download failed";
+      const isExpiredOrMissing = /expired|not found|revoked/i.test(message);
+      if (allowExpiryRetry && isExpiredOrMissing) {
+        try {
+          const purchaseIdForDownload = offer.purchaseId ?? getStoredPurchaseId(offer.offerId);
+          if (!purchaseIdForDownload) {
+            setDownloadError("Purchase details not available for download.");
+            setDownloadStatus("error");
+            return;
+          }
+          const grant = await issueDownloadGrant(purchaseIdForDownload, offer.offerId);
+          await triggerFileDownload(grant.grantToken);
+          setDownloadStatus("success");
+          return;
+        } catch (retryError) {
+          setDownloadError(retryError instanceof Error ? retryError.message : "Download failed");
+          setDownloadStatus("error");
+          return;
+        }
+      }
+      setDownloadError(message);
+      setDownloadStatus("error");
+    }
+  };
+
+  // Automatically start the download once the license is granted and this view mounts.
+  // A manual button below remains as a fallback if the browser blocks the automatic download.
+  useEffect(() => {
+    if (autoAttempted.current) return;
+    autoAttempted.current = true;
+    initiateDownload(true);
+  }, [offer.purchaseId, offer.offerId]);
 
   return (
     <main>
@@ -233,7 +328,7 @@ function LicensedView({ offer }: { offer: Offer }) {
 
         <Card className="mt-8 text-left">
           <div className="flex items-center gap-4">
-            <ContentPreview url={offer.contentUrl} title={offer.title} size="small" />
+            <ContentPreview url={offer.preview_url ?? offer.contentUrl} title={offer.title} size="small" />
             <p className="font-semibold text-text-primary">{offer.title}</p>
           </div>
 
@@ -243,6 +338,30 @@ function LicensedView({ offer }: { offer: Offer }) {
               <Calendar size={14} /> Licensed
             </div>
             <p className="mt-1 text-sm font-medium text-text-primary">{licensedDate}</p>
+          </div>
+
+          <div className="mt-6 border-t border-border pt-6">
+            <Button fullWidth onClick={() => initiateDownload(false)} disabled={downloadStatus === "downloading" || !(offer.purchaseId || getStoredPurchaseId(offer.offerId))}>
+              <Download size={16} className="mr-2" />
+              {downloadStatus === "downloading" ? "Preparing download…"
+                : downloadStatus === "success" ? "Download complete"
+                : "Download Original (Unwatermarked)"}
+            </Button>
+            {downloadError && (
+              <p className="mt-2 text-sm text-red-600" role="alert">
+                {downloadError}. Use the button above to retry.
+              </p>
+            )}
+            {downloadStatus === "success" && (
+              <p className="mt-2 text-xs text-text-secondary text-center">
+                Your download should start automatically. Use the button above to retry if it does not.
+              </p>
+            )}
+            {offer.purchaseId && downloadStatus === "idle" && (
+              <p className="mt-2 text-xs text-text-secondary text-center">
+                Downloads the original, unwatermarked file.
+              </p>
+            )}
           </div>
 
           <div className="mt-6 border-t border-border pt-6">
@@ -268,11 +387,6 @@ function LicensedView({ offer }: { offer: Offer }) {
                     {offer.licenseNostrEventId.slice(0, 20)}...
                   </code>
                 </div>
-                {/*
-                  BACKEND/PRODUCT TEAM: point this at a real Nostr explorer,
-                  e.g. `https://njump.me/${offer.licenseNostrEventId}`, once
-                  events are actually published to a relay.
-                */}
                 <a
                   href={`https://njump.me/${offer.licenseNostrEventId}`}
                   target="_blank"

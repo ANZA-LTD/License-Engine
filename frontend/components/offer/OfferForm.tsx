@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Input, Textarea, Select } from "@/components/ui/FormFields";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { createOffer, getMyVideo } from "@/lib/api";
-import { LicenseType, CreateOfferPayload } from "@/lib/types";
+import { LicenseType, CreateOfferPayload, OfferSummary } from "@/lib/types";
 import { probeSigner, SignerProbe } from "@/lib/nostr";
+import { canCreateOfferFromUploadedVideo } from "@/lib/offerAccess";
 import {
   LICENSE_TYPE_DESCRIPTIONS,
   LICENSE_TYPE_LABELS,
@@ -22,6 +24,7 @@ const EMPTY_FORM: FormState = {
   contentUrl: "",
   brandName: "",
   priceSats: 0,
+  creatorLightningAddress: "",
   licenseType: "30_DAY_SOCIAL",
   licenseDescription: LICENSE_TYPE_DESCRIPTIONS["30_DAY_SOCIAL"],
 };
@@ -34,8 +37,12 @@ export function OfferForm() {
   // Arriving from a video card puts the selected video in the address. The form
   // then submits only its id, so the backend resolves the content reference and
   // fingerprint from the video record instead of trusting a pasted URL.
-  const videoId = useSearchParams().get("videoId");
-  const [linkedVideo, setLinkedVideo] = useState<{ id: string; title: string } | null>(null);
+  const rawVideoId = useSearchParams().get("videoId");
+  const videoId = rawVideoId?.trim() || null;
+  const [linkedVideo, setLinkedVideo] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Errors>({});
@@ -43,6 +50,10 @@ export function OfferForm() {
   const [submitting, setSubmitting] = useState(false);
   const [signer, setSigner] = useState<SignerProbe | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Set once the linked video loads. When the video already carries an offer
+  // (live or draft), re-creation is blocked so the creator can't publish a
+  // duplicate for content that is already offered.
+  const [existingOffer, setExistingOffer] = useState<OfferSummary | null>(null);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -72,7 +83,14 @@ export function OfferForm() {
   // Only the authenticated creator can read their own video, so a foreign or
   // mistyped id fails here rather than at publish time.
   useEffect(() => {
-    if (!videoId) return;
+    if (!videoId) {
+      setLinkedVideo(null);
+      setVideoError(
+        "Upload a video first, then create the offer from that uploaded asset.",
+      );
+      return;
+    }
+
     let cancelled = false;
     setVideoError(null);
     getMyVideo(videoId)
@@ -85,6 +103,14 @@ export function OfferForm() {
           // Shown for context only. The server re-derives this value itself.
           contentUrl: owned.preview_url,
         }));
+        const existing = owned.offers.find(
+          (o) =>
+            o.status === "published" ||
+            o.status === "licensing" ||
+            o.status === "draft" ||
+            o.status === "publishing",
+        );
+        setExistingOffer(existing ?? null);
       })
       .catch((cause) => {
         if (cancelled) return;
@@ -114,6 +140,14 @@ export function OfferForm() {
 
   function validate(): boolean {
     const next: Errors = {};
+
+    if (!canCreateOfferFromUploadedVideo(videoId)) {
+      next.contentUrl =
+        "Upload a video first, then create the offer from that uploaded asset.";
+      setErrors(next);
+      return false;
+    }
+
     if (!form.title.trim()) next.title = "Content title is required.";
     if (!form.description.trim()) next.description = "Description is required.";
     // A video-backed offer does not need a typed URL: the server resolves it.
@@ -122,6 +156,13 @@ export function OfferForm() {
     if (Boolean(videoId) && !linkedVideo)
       next.contentUrl = videoError ?? "Waiting for your video to load.";
     if (!form.brandName.trim()) next.brandName = "Brand is required.";
+    if (
+      !/^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(
+        form.creatorLightningAddress.trim(),
+      )
+    )
+      next.creatorLightningAddress =
+        "Enter a public Lightning Address (name@domain).";
     if (!form.priceSats || form.priceSats <= 0)
       next.priceSats = "Price must be greater than 0.";
     if (!form.licenseDescription.trim())
@@ -140,16 +181,15 @@ export function OfferForm() {
     setSubmitting(true);
     setSubmitError(null);
     if (signer?.status !== "connected") {
-  setSubmitError(
-    signer?.status === "locked"
-      ? "Your Nostr extension is installed but locked. Unlock it (and add an account) in your browser toolbar, then press Retry."
-      : "No Nostr extension detected. Install Alby or Flamingo, add an account, then press Retry."
-  );
-  setSubmitting(false);
-  return;
-  }
+      setSubmitError(
+        signer?.status === "locked"
+          ? "Your Nostr extension is installed but locked. Unlock it (and add an account) in your browser toolbar, then press Retry."
+          : "No Nostr extension detected. Install Alby or Flamingo, add an account, then press Retry.",
+      );
+      setSubmitting(false);
+      return;
+    }
     try {
-
       const res = await createOffer({
         ...form,
         videoId: linkedVideo ? linkedVideo.id : undefined,
@@ -161,10 +201,51 @@ export function OfferForm() {
       setSubmitError(
         err instanceof Error
           ? err.message
-          : "Something went wrong publishing this offer. Please try again."
+          : "Something went wrong publishing this offer. Please try again.",
       );
       setSubmitting(false);
     }
+  }
+
+  if (!canCreateOfferFromUploadedVideo(videoId)) {
+    return (
+      <Card>
+        <h2 className="mb-2 text-lg font-semibold text-text-primary">
+          Uploads are required before creating an offer
+        </h2>
+        <p className="mb-5 text-sm text-text-secondary">
+          Direct URL entry is disabled to keep offers tied to ANZA-hosted
+          content and protect creator rights.
+        </p>
+        <Link
+          href="/creator-profile"
+          className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
+        >
+          Go to My Videos
+        </Link>
+      </Card>
+    );
+  }
+
+  if (existingOffer) {
+    return (
+      <Card>
+        <h2 className="mb-2 text-lg font-semibold text-text-primary">
+          An offer already exists for this video
+        </h2>
+        <p className="mb-4 text-sm text-text-secondary">
+          A licensing offer for{" "}
+          <span className="font-medium">{linkedVideo?.title ?? "this video"}</span>
+          already exists, so a new one cannot be created from it.
+        </p>
+        <Link
+          href={`/offers/${existingOffer.offer_id}`}
+          className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
+        >
+          View existing offer
+        </Link>
+      </Card>
+    );
   }
 
   if (step === "preview") {
@@ -192,9 +273,22 @@ export function OfferForm() {
             }
           />
           <PreviewRow label="Brand" value={form.brandName} />
-          <PreviewRow label="Price" value={`${form.priceSats.toLocaleString()} sats`} />
-          <PreviewRow label="License type" value={LICENSE_TYPE_LABELS[form.licenseType]} />
-          <PreviewRow label="License description" value={form.licenseDescription} />
+          <PreviewRow
+            label="Creator Lightning Address"
+            value={form.creatorLightningAddress}
+          />
+          <PreviewRow
+            label="Price"
+            value={`${form.priceSats.toLocaleString()} sats`}
+          />
+          <PreviewRow
+            label="License type"
+            value={LICENSE_TYPE_LABELS[form.licenseType]}
+          />
+          <PreviewRow
+            label="License description"
+            value={form.licenseDescription}
+          />
         </dl>
 
         {submitError && (
@@ -286,6 +380,15 @@ export function OfferForm() {
           error={errors.brandName}
         />
 
+        <Input
+          label="Creator Lightning Address"
+          placeholder="creator@example.com"
+          hint="This destination is included in your signed offer. Changing it later requires publishing a new offer."
+          value={form.creatorLightningAddress}
+          onChange={(e) => update("creatorLightningAddress", e.target.value)}
+          error={errors.creatorLightningAddress}
+        />
+
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
           <Input
             label="Price (sats)"
@@ -300,7 +403,9 @@ export function OfferForm() {
           <Select
             label="License Type"
             value={form.licenseType}
-            onChange={(e) => handleLicenseTypeChange(e.target.value as LicenseType)}
+            onChange={(e) =>
+              handleLicenseTypeChange(e.target.value as LicenseType)
+            }
           >
             {LICENSE_TYPE_OPTIONS.map((type) => (
               <option key={type} value={type}>
@@ -376,11 +481,21 @@ function SignerBanner({
           ) : (
             <>
               Install a Nostr extension —{" "}
-              <a href="https://getflamingo.org" target="_blank" rel="noopener noreferrer" className="font-medium underline">
+              <a
+                href="https://getflamingo.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium underline"
+              >
                 Flamingo
               </a>{" "}
               or{" "}
-              <a href="https://getalby.com" target="_blank" rel="noopener noreferrer" className="font-medium underline">
+              <a
+                href="https://getalby.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium underline"
+              >
                 Alby
               </a>
               .
@@ -388,8 +503,8 @@ function SignerBanner({
           )}
         </li>
         <li>
-          New to Nostr? Choose <strong>Create account</strong> inside the extension and
-          set a password. This generates your keypair.
+          New to Nostr? Choose <strong>Create account</strong> inside the
+          extension and set a password. This generates your keypair.
         </li>
         <li>
           Already have one? Use <strong>Import account</strong> and paste your{" "}
@@ -399,7 +514,10 @@ function SignerBanner({
         <li>Unlock the extension so it can answer signing requests.</li>
         <li>
           Allow the extension to access{" "}
-          <code className="font-mono text-xs">{typeof window !== "undefined" ? window.location.host : "this site"}</code>.
+          <code className="font-mono text-xs">
+            {typeof window !== "undefined" ? window.location.host : "this site"}
+          </code>
+          .
         </li>
       </ol>
 

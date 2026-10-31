@@ -1,20 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { PostgresOfferStore } from '../src/repositories/offers.js';
-
 import { PostgresContentStore } from '../src/repositories/videos.js';
+import { applyMigrations } from '../src/database/migrate.js';
 
-async function withSchema(run) {
+async function withSchema(run, { initializeMigrations = true } = {}) {
   const schema = 'cp_test_' + randomUUID().replaceAll('-', '');
   const admin = new pgModule.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new pgModule.Pool({ connectionString: process.env.TEST_DATABASE_URL, options: `-c search_path=${schema}` });
   try {
-    for (const migration of ['001_offers.sql', '002_videos.sql']) {
-      await pool.query(await readFile(new URL(`../src/database/migrations/${migration}`, import.meta.url), 'utf8'));
-    }
+    if (initializeMigrations) await applyMigrations(pool);
     await run(pool, schema);
   } finally {
     await pool.end();
@@ -29,6 +27,7 @@ test('PostgreSQL transactions, idempotency, outbox retry and acknowledgement', a
   const { default: pg } = await import('pg');
   pgModule = pg;
   await withSchema(async pool => {
+    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 4 });
     const store = new PostgresOfferStore(pool);
     const offer = { id: 'offer_test', creator_pubkey: 'a'.repeat(64), terms: {}, status: 'draft', event_id: null, created_at: 1000 };
     const work = async tx => { await tx.insertOffer(offer); return { status: 201, body: offer }; };
@@ -50,6 +49,160 @@ test('PostgreSQL transactions, idempotency, outbox retry and acknowledgement', a
     assert.equal(await store.publishNext(() => assert.fail('Already published')), false);
     const restarted = new PostgresOfferStore(pool);
     assert.equal((await restarted.getOffer(offer.id)).status, 'published');
+  });
+});
+
+test('migration runner upgrades an existing schema, preserves rows, and rejects edited migrations', async t => {
+  if (!process.env.TEST_DATABASE_URL) { t.skip('Set TEST_DATABASE_URL to a disposable PostgreSQL database'); return; }
+  if (!pgModule) { const { default: pg } = await import('pg'); pgModule = pg; }
+  await withSchema(async pool => {
+    for (const migration of ['001_offers.sql', '002_videos.sql']) {
+      await pool.query(await readFile(new URL(`../src/database/migrations/${migration}`, import.meta.url), 'utf8'));
+    }
+    await pool.query('INSERT INTO offers(id, document) VALUES ($1, $2)', ['existing_offer', { status: 'published' }]);
+
+    assert.deepEqual(await applyMigrations(pool), { applied: 4, skipped: 0 });
+    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 4 });
+    assert.deepEqual((await pool.query('SELECT document FROM offers WHERE id = $1', ['existing_offer'])).rows[0].document,
+      { status: 'published' });
+
+    await pool.query("UPDATE backend_schema_migrations SET checksum = repeat('0', 64) WHERE name = '001_offers.sql'");
+    await assert.rejects(applyMigrations(pool), /changed after it was recorded/);
+  }, { initializeMigrations: false });
+});
+
+test('Zap purchase reservation and license issuance are transactionally idempotent', async t => {
+  if (!process.env.TEST_DATABASE_URL) { t.skip('Set TEST_DATABASE_URL to a disposable PostgreSQL database'); return; }
+  if (!pgModule) { const { default: pg } = await import('pg'); pgModule = pg; }
+  await withSchema(async pool => {
+    const store = new PostgresOfferStore(pool);
+    const offer = {
+      id: 'offer_zap', creator_pubkey: 'a'.repeat(64),
+      terms: { lightning_address: 'creator@example.org', amount_sats: 1 },
+      status: 'published', event_id: 'b'.repeat(64), created_at: 1000
+    };
+    await pool.query('INSERT INTO offers(id, document, event_id) VALUES ($1, $2, $3)',
+      [offer.id, offer, offer.event_id]);
+    await pool.query('INSERT INTO nostr_outbox(event_id, offer_id, event) VALUES ($1, $2, $3)',
+      [offer.event_id, offer.id, { ...offer, kind: 9998 }]);
+    const purchase = {
+      id: 'purchase_zap', offer_id: offer.id, offer_event_id: offer.event_id,
+      creator_pubkey: offer.creator_pubkey, lightning_address: offer.terms.lightning_address,
+      amount_sats: 1, amount_msat: 1000, network: 'mainnet',
+      idempotency_hash: 'c'.repeat(64), access_token_hash: 'd'.repeat(64)
+    };
+    const first = await store.reserveZapPurchase({ purchase, now: 1000 });
+    assert.equal(first.shouldCreate, true);
+    const replay = await store.reserveZapPurchase({ purchase: { ...purchase, id: 'different_id' }, now: 1001 });
+    assert.equal(replay.shouldCreate, false);
+    assert.equal(replay.purchase.id, purchase.id);
+    await assert.rejects(store.reserveZapPurchase({
+      purchase: { ...purchase, id: 'other_purchase', idempotency_hash: 'e'.repeat(64) }, now: 1001
+    }), { status: 409 });
+
+    const zapRequest = { id: 'f'.repeat(64), kind: 9734, tags: [] };
+    await store.setZapRequest(purchase.id, {
+      receiverPubkey: '9'.repeat(64), callbackUrl: 'https://creator.example/callback',
+      minSendable: 1, maxSendable: 100000, zapRequestId: zapRequest.id,
+      zapRequestJson: JSON.stringify(zapRequest), zapRequest
+    });
+    await store.saveZapInvoice(purchase.id, {
+      request: 'lnbc10n1invoice', payment_hash: '1'.repeat(64), payee_pubkey: '2'.repeat(66),
+      timestamp: 1000, expires_at: 4600
+    });
+    const receipt = { id: '3'.repeat(64), kind: 9735, tags: [] };
+    const license = { id: '4'.repeat(64), kind: 9998, content: '{}' };
+    const firstResult = await store.verifyZapPurchase({
+      purchaseId: purchase.id, receiptEvent: receipt, settledAt: 1050, licenseEvent: license
+    });
+    assert.equal(firstResult.verified, true);
+    assert.equal(firstResult.purchase.status, 'verified');
+    assert.equal(firstResult.offer.status, 'licensing');
+    // The download grant is issued atomically within the transaction when the
+    // offer has a video_id. The raw token must be returned so the service can
+    // surface it via the purchase status polling endpoint.
+    assert.ok(firstResult.downloadGrant, 'download grant should be returned from verifyZapPurchase');
+    assert.ok(firstResult.downloadGrant.grantToken, 'raw grant token should be returned');
+    assert.ok(/^[0-9a-f]{64}$/.test(firstResult.downloadGrant.grantToken), 'grant token must be 64 hex chars');
+    assert.ok(firstResult.downloadGrant.expiresAt > 1050, 'grant expiry must be in the future');
+    // Verify the grant was persisted in the download_grants table.
+    const grantRows = (await pool.query('SELECT * FROM download_grants WHERE purchase_id = $1', [purchase.id])).rows;
+    assert.equal(grantRows.length, 1);
+    assert.equal(grantRows[0].video_id, null);
+    // A second verification attempt must return verified:false (already verified).
+    const secondResult = await store.verifyZapPurchase({
+      purchaseId: purchase.id, receiptEvent: receipt, settledAt: 1050, licenseEvent: license
+    });
+    assert.equal(secondResult.verified, false);
+    assert.equal(secondResult.downloadGrant, undefined, 'no grant on re-verification');
+    assert.equal((await store.getZapPurchase(purchase.id)).status, 'verified');
+    assert.equal((await store.getOffer(offer.id)).payment.status, 'attested');
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM nostr_outbox')).rows[0].count, 2);
+  });
+});
+
+test('download grant is issued atomically when verifyZapPurchase runs for a video-backed offer', async t => {
+  if (!process.env.TEST_DATABASE_URL) { t.skip('Set TEST_DATABASE_URL to a disposable PostgreSQL database'); return; }
+  if (!pgModule) { const { default: pg } = await import('pg'); pgModule = pg; }
+  await withSchema(async pool => {
+    const store = new PostgresOfferStore(pool);
+    const videoId = 'video_grant_test';
+    await pool.query('INSERT INTO videos(id, owner_public_key, document) VALUES ($1, $2, $3)',
+      [videoId, 'a'.repeat(64), { id: videoId, public_id: 'contentport/videos/test', format: 'mp4', status: 'ready' }]);
+    const offer = {
+      id: 'offer_video', creator_pubkey: 'a'.repeat(64),
+      terms: { lightning_address: 'creator@example.org', amount_sats: 1 },
+      status: 'published', event_id: 'b'.repeat(64), video_id: videoId, created_at: 1000
+    };
+    await pool.query('INSERT INTO offers(id, document, event_id, video_id) VALUES ($1, $2, $3, $4)',
+      [offer.id, offer, offer.event_id, videoId]);
+    await pool.query('INSERT INTO nostr_outbox(event_id, offer_id, event) VALUES ($1, $2, $3)',
+      [offer.event_id, offer.id, { ...offer, kind: 9998 }]);
+    const purchase = {
+      id: 'purchase_video', offer_id: offer.id, offer_event_id: offer.event_id,
+      creator_pubkey: offer.creator_pubkey, lightning_address: offer.terms.lightning_address,
+      amount_sats: 1, amount_msat: 1000, network: 'mainnet',
+      idempotency_hash: 'c'.repeat(64), access_token_hash: 'd'.repeat(64)
+    };
+    await store.reserveZapPurchase({ purchase, now: 1000 });
+    await store.setZapRequest(purchase.id, {
+      receiverPubkey: '9'.repeat(64), callbackUrl: 'https://creator.example/callback',
+      minSendable: 1, maxSendable: 100000, zapRequestId: 'f'.repeat(64),
+      zapRequestJson: '{}', zapRequest: { id: 'f'.repeat(64) }
+    });
+    await store.saveZapInvoice(purchase.id, {
+      request: 'lnbc10n1invoice', payment_hash: '1'.repeat(64), payee_pubkey: '2'.repeat(66),
+      timestamp: 1000, expires_at: 4600
+    });
+    const receipt = { id: '3'.repeat(64), kind: 9735, tags: [] };
+    const license = { id: '4'.repeat(64), kind: 9998, content: '{}' };
+    const result = await store.verifyZapPurchase({
+      purchaseId: purchase.id, receiptEvent: receipt, settledAt: 1050, licenseEvent: license
+    });
+    assert.equal(result.verified, true);
+    assert.ok(result.downloadGrant, 'download grant should be returned');
+    assert.ok(/^[0-9a-f]{64}$/.test(result.downloadGrant.grantToken), 'raw token must be 64 hex chars');
+    // The grant row must reference the offer's video_id.
+    const grantRows = (await pool.query('SELECT * FROM download_grants WHERE purchase_id = $1', [purchase.id])).rows;
+    assert.equal(grantRows.length, 1);
+    assert.equal(grantRows[0].offer_id, offer.id);
+    assert.equal(grantRows[0].video_id, videoId);
+    assert.equal(grantRows[0].license_event_id, license.id);
+    assert.equal(grantRows[0].max_uses, 5);
+    // The token_hash must match the sha256 of the raw token.
+    const expectedHash = createHash('sha256').update(result.downloadGrant.grantToken).digest('hex');
+    assert.equal(grantRows[0].token_hash, expectedHash);
+    // getDownloadGrantForPurchase must return the persisted grant.
+    const stored = await store.getDownloadGrantForPurchase(purchase.id);
+    assert.ok(stored, 'getDownloadGrantForPurchase should return the grant');
+    assert.equal(stored.offer_id, offer.id);
+    // consumeDownloadGrant must atomically increment use_count.
+    const consumed = await store.consumeDownloadGrant(stored.token_hash, 1100);
+    assert.ok(consumed, 'consumeDownloadGrant should succeed');
+    assert.equal(consumed.use_count, 1);
+    // A second consume must succeed (max_uses is 5).
+    const consumed2 = await store.consumeDownloadGrant(stored.token_hash, 1101);
+    assert.equal(consumed2.use_count, 2);
   });
 });
 

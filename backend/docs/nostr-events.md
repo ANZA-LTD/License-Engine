@@ -1,6 +1,6 @@
 # Day 1: Nostr event design
 
-Status: application-specific experimental payloads, not a standardized licensing NIP. Builders return unsigned templates; they perform no network calls.
+Status: Phase 4 implementation in progress. These are application-specific experimental payloads, not a standardized licensing NIP. Builders return unsigned templates; they perform no network calls. No mainnet payment or staging deployment has been performed.
 
 ## Envelope and kind choice
 
@@ -18,24 +18,28 @@ We avoid replaceable application storage for this record chain: [NIP-78](https:/
 {
   schema: "contentport.offer.v1",
   terms: <Terms from the shared schema>,
-  attestor_pubkey: <ContentPort settlement attestor public key>
+  attestor_pubkey: <Anza license attestor public key>
 }
 ```
 
-The creator signs the complete template using their own signer. The backend validates the signature and exact terms before queuing it. The signed attestor key explicitly identifies who is trusted to publish the automatic settlement statement.
+The creator signs the complete template using their own signer. The backend validates the signature and exact terms before queuing it. New offers include the creator's Lightning Address in `terms`; the signature makes that destination immutable for the offer. It does not prove who controls the receiving wallet. Address ownership must be checked during the separately approved manual staging test.
 
 ## License: service attestation
 
-`buildLicenseEvent` takes an already signature-verified offer and a wallet-verified Settlement. It rejects mismatched offer references, amounts, attestors, and settlement times before the offer. It emits `e` (offer ID), `p` (creator key), and `t=contentport-license-v1` tags.
+For a mainnet purchase, Anza creates a purchase-scoped ephemeral Nostr identity and signs a NIP-57 kind `9734` Zap request for the creator receiver key, exact amount, offer event, and configured relays. The Lightning Address/LNURL-pay service returns a BOLT11 invoice whose description hash commits to that request. The invoice is a request for payment, not evidence of settlement. After payment, the receiver may publish a NIP-57 kind `9735` receipt to relays.
 
-Content includes `schema: "contentport.license.v1"`, `offer_event_id`, `payment_hash`, `amount_sats`, `starts_at`, `ends_at`, and `evidence_type: "contentport-settlement-attestation"`. Fixed durations start at settlement; perpetual duration has no end. The service signs with the attestor key designated in the offer, allowing automatic publication while the creator is offline.
+Anza retrieves candidate receipts from the relays named in the Zap request and validates the signature against the receiver key advertised by the HTTPS-discovered LNURL-pay endpoint. It also validates the embedded Zap request, creator recipient, offer event, exact amount, invoice, and purchase association. If present, a preimage is checked against the invoice payment hash, but its presence alone is not proof that payment occurred.
 
-This is an explicit trust tradeoff: anyone can verify the two signatures and their relationship, but the settlement assertion relies on the attestor's wallet verification. It is not independent cryptographic proof that a particular brand paid. Buyer acceptance remains private in v1; a jointly signed brand acceptance is future work.
+**Trust boundary:** under the approved policy, a valid kind `9735` receipt signed by the expected receiver key is accepted as the creator payment service's attestation. It is not independent proof that funds moved. NIP-57 does not guarantee every Lightning Address provider issues receipts, and relays only provide event discovery/transport; they do not prove the receipt's payment claim.
+
+Only after that policy accepts a receipt does Anza sign and queue one license event. Content includes `schema: "contentport.license.v1"`, `offer_event_id`, `payment_hash`, `amount_sats`, `starts_at`, `ends_at`, `purchase_id`, `zap_receipt_event_id`, `receiver_pubkey`, `payment_network`, and `evidence_type: "contentport-nip57-provider-attestation"`. Fixed terms start at the receipt timestamp; perpetual terms have no end. The Anza attestor signature means Anza applied its verification policy and issued the license; it is **not independent proof that funds moved**.
 
 ## Verification and publication requirements
 
-Before production, implement cryptographic event verification, configured kind checks, payload version checks, and timestamp policy at ingestion. Shape validation alone is insufficient. Builders deliberately accept no private keys. Store the finished signed event once and retry those same bytes and ID. Keep an outbox so settlement and publication can recover independently after a crash.
+The API verifies creator event signatures, configured kinds, payload versions, and timestamps. The receiver receipt is independently signature-checked and purchase-bound before license issuance. Builders deliberately accept no private keys; signing happens in the service. Store each finished signed event once and retry those same bytes and ID. The database transaction ties the verified purchase, offer license state, and outbox event together.
 
-The public record omits invoices, preimages, buyer contact details, and wallet connection secrets. Export retained signed events for independent verification. A signed timestamp is author-supplied; neither timestamp nor relay acknowledgement guarantees permanent storage, legal identity, or brand acceptance.
+The public license record omits the invoice, preimage, buyer contact details, and wallet connection secrets. It carries payment and receipt event references so an independent reader can inspect the signed claims. A signed timestamp is author-supplied; neither timestamp nor relay acknowledgement guarantees permanent storage, real-world identity, or brand acceptance. A public offer read omits the raw purchase invoice and payment hash.
+
+Wallet of Satoshi's ability to receive Anza Zap requests and publish discoverable receipts remains unverified; it is optional, and no creator wallet change is required without evidence. Any real staging or production compatibility test is manual, exactly 1 sat, and requires separate explicit approval for that environment. Automated tests never send mainnet payments.
 
 Protocol sources checked on 2026-09-27. Final kind selection and relay interoperability remain implementation prerequisites.

@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validate, buildOfferEvent, buildLicenseEvent, contract } from '../index.js';
+import { matchOfferRoute, matchPurchaseRoute, matchWebhookRoute } from '../src/routes/offers.js';
+import { matchVideoRoute } from '../src/routes/content.js';
+import { buildPostmanCollection } from '../src/contracts/postman.js';
 
 const creator = 'a'.repeat(64);
 const attestor = 'b'.repeat(64);
@@ -86,10 +89,50 @@ test('payment settlement and license publication can be represented independentl
 });
 test('exported API contract matches source and all schema references resolve', () => {
   assert.deepEqual(JSON.parse(readFileSync(new URL('../docs/openapi.json', import.meta.url))), contract);
+  assert.deepEqual(JSON.parse(readFileSync(new URL('../docs/postman_collection.json', import.meta.url))),
+    buildPostmanCollection(contract));
   const visit = (value) => {
     if (!value || typeof value !== 'object') return;
     if (value.$ref) assert.ok(contract.components.schemas[value.$ref.split('/').at(-1)], value.$ref);
     Object.values(value).forEach(visit);
   };
   visit(contract);
+});
+
+test('OpenAPI paths and methods match every implemented API and health route only', () => {
+  const routes = [
+    ['GET', '/health/live', '/health/live'],
+    ['GET', '/health/ready', '/health/ready'],
+    ['GET', '/api/offers', '/api/offers'],
+    ['POST', '/api/offers', '/api/offers'],
+    ['GET', '/api/offers/offer_1', '/api/offers/{id}'],
+    ['POST', '/api/offers/offer_1/publish', '/api/offers/{id}/publish'],
+    ['POST', '/api/offers/offer_1/payment', '/api/offers/{id}/payment'],
+    ['GET', '/api/offers/offer_1/status', '/api/offers/{id}/status'],
+    ['GET', '/api/purchases/purchase_1/status', '/api/purchases/{id}/status'],
+    ['POST', '/api/webhooks/lightning', '/api/webhooks/lightning'],
+    ['POST', '/api/webhooks/speed/lightning', '/api/webhooks/speed/lightning'],
+    ['GET', '/api/videos', '/api/videos'],
+    ['POST', '/api/videos', '/api/videos'],
+    ['POST', '/api/videos/upload-authorization', '/api/videos/upload-authorization'],
+    ['GET', '/api/videos/video_1', '/api/videos/{id}'],
+    ['DELETE', '/api/videos/video_1', '/api/videos/{id}']
+  ];
+  const documented = [];
+  for (const [method, routePath, openApiPath] of routes) {
+    if (!routePath.startsWith('/health/')) {
+      assert.ok(matchWebhookRoute(method, routePath) || matchOfferRoute(method, routePath) || matchPurchaseRoute(method, routePath) || matchVideoRoute(method, routePath),
+        `${method} ${routePath} must be routed by the API`);
+    }
+    assert.ok(contract.paths[openApiPath]?.[method.toLowerCase()], `${method} ${openApiPath} must appear in OpenAPI`);
+    documented.push(`${method} ${openApiPath}`);
+  }
+  const openApiMethods = Object.entries(contract.paths).flatMap(([path, item]) =>
+    Object.keys(item).filter(method => ['get', 'post', 'put', 'patch', 'delete'].includes(method))
+      .map(method => `${method.toUpperCase()} ${path}`)).sort();
+  assert.deepEqual(openApiMethods, documented.sort());
+  assert.equal(contract.paths['/api/offers/{id}/payments'], undefined);
+  assert.equal(contract.paths['/api/payments/{id}'], undefined);
+  assert.equal(contract.paths['/api/offers/{id}/payment'].post['x-availability'], undefined);
+  assert.equal(contract.paths['/api/offers/{id}/status'].get['x-availability'], 'development-only');
 });

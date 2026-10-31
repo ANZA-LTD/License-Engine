@@ -1,3 +1,4 @@
+import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { HttpError } from '../utils/errors.js';
 
 export class PostgresOfferStore {
@@ -46,6 +47,191 @@ export class PostgresOfferStore {
       [entry.id, entry.provider, entry.eventType ?? null, entry.paymentHash ?? null, entry.offerId ?? null, entry.payload, entry.headers]
     );
     return entry;
+  }
+  async reserveZapPurchase({ purchase, now }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`purchase:${purchase.offer_id}`]);
+      const offer = (await client.query('SELECT document FROM offers WHERE id = $1 FOR UPDATE', [purchase.offer_id])).rows[0]?.document;
+      if (!offer || offer.event_id !== purchase.offer_event_id || offer.creator_pubkey !== purchase.creator_pubkey) {
+        throw new HttpError(404, 'NOT_FOUND', 'Published offer not found.');
+      }
+      if (offer.status !== 'published') throw new HttpError(409, 'OFFER_NOT_PURCHASABLE', 'This offer is not available for purchase.');
+      if (offer.terms.lightning_address !== purchase.lightning_address || offer.terms.amount_sats !== purchase.amount_sats) {
+        throw new HttpError(409, 'OFFER_CHANGED', 'The signed offer payment destination or amount has changed.');
+      }
+      const previous = (await client.query('SELECT * FROM zap_purchases WHERE offer_id = $1 AND idempotency_hash = $2 FOR UPDATE',
+        [purchase.offer_id, purchase.idempotency_hash])).rows[0];
+      if (previous) {
+        if (previous.access_token_hash !== purchase.access_token_hash) throw new HttpError(409, 'IDEMPOTENCY_CONFLICT', 'This purchase request key is already bound to a different access token.');
+        if (previous.status === 'failed') {
+          const restarted = (await client.query(`UPDATE zap_purchases SET receiver_pubkey = NULL, callback_url = NULL,
+            min_sendable = NULL, max_sendable = NULL, zap_request_id = NULL, zap_request_json = NULL,
+            zap_request = NULL, invoice_request = NULL, payment_hash = NULL, invoice_payee_pubkey = NULL,
+            invoice_issued_at = NULL, invoice_expires_at = NULL, receipt_event_id = NULL, receipt_event = NULL,
+            settled_at = NULL, status = 'creating', creation_lease_until = $2, updated_at = $3
+            WHERE id = $1 RETURNING *`, [previous.id, now + 120, now])).rows[0];
+          await client.query('COMMIT');
+          return { purchase: restarted, shouldCreate: true };
+        }
+        if (previous.status === 'creating' && Number(previous.creation_lease_until) <= now) {
+          const resumed = (await client.query(`UPDATE zap_purchases SET creation_lease_until = $2, updated_at = $3
+            WHERE id = $1 RETURNING *`, [previous.id, now + 120, now])).rows[0];
+          await client.query('COMMIT');
+          return { purchase: resumed, shouldCreate: true };
+        }
+        await client.query('COMMIT');
+        return { purchase: previous, shouldCreate: false };
+      }
+      await client.query(`UPDATE zap_purchases SET status = 'failed', updated_at = $2
+        WHERE offer_id = $1 AND status = 'creating' AND creation_lease_until <= $2`, [purchase.offer_id, now]);
+      const active = (await client.query(`SELECT id FROM zap_purchases
+        WHERE offer_id = $1 AND status IN ('creating', 'pending') LIMIT 1`, [purchase.offer_id])).rows[0];
+      if (active) throw new HttpError(409, 'PURCHASE_ALREADY_ACTIVE', 'A payment request is already active for this offer.');
+      const created = (await client.query(`INSERT INTO zap_purchases(
+        id, offer_id, offer_event_id, creator_pubkey, lightning_address, amount_sats, amount_msat,
+        network, idempotency_hash, access_token_hash, status, creation_lease_until, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'creating',$11,$12,$12) RETURNING *`, [
+        purchase.id, purchase.offer_id, purchase.offer_event_id, purchase.creator_pubkey, purchase.lightning_address,
+        purchase.amount_sats, purchase.amount_msat, purchase.network, purchase.idempotency_hash,
+        purchase.access_token_hash, now + 120, now
+      ])).rows[0];
+      await client.query('COMMIT');
+      return { purchase: created, shouldCreate: true };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
+  }
+  async getZapPurchase(id) {
+    return (await this.pool.query('SELECT * FROM zap_purchases WHERE id = $1', [id])).rows[0];
+  }
+  async setZapRequest(id, { receiverPubkey, callbackUrl, minSendable, maxSendable, zapRequestId, zapRequestJson, zapRequest }) {
+    const result = await this.pool.query(`UPDATE zap_purchases SET receiver_pubkey = $2, callback_url = $3,
+      min_sendable = $4, max_sendable = $5, zap_request_id = $6, zap_request_json = $7, zap_request = $8, updated_at = $9
+      WHERE id = $1 AND status = 'creating' AND zap_request_id IS NULL RETURNING *`,
+    [id, receiverPubkey, callbackUrl, minSendable, maxSendable, zapRequestId, zapRequestJson, zapRequest, Math.floor(Date.now() / 1000)]);
+    if (result.rowCount === 1) return result.rows[0];
+    const previous = await this.getZapPurchase(id);
+    if (previous?.zap_request_id === zapRequestId) return previous;
+    throw new HttpError(409, 'PURCHASE_CREATION_CONFLICT', 'The purchase request is already being created.');
+  }
+  async saveZapInvoice(id, invoice) {
+    const result = await this.pool.query(`UPDATE zap_purchases SET invoice_request = $2, payment_hash = $3,
+      invoice_payee_pubkey = $4, invoice_issued_at = $5, invoice_expires_at = $6, status = 'pending',
+      next_receipt_check_at = $7, updated_at = $7
+      WHERE id = $1 AND status = 'creating' RETURNING *`,
+    [id, invoice.request, invoice.payment_hash, invoice.payee_pubkey, invoice.timestamp, invoice.expires_at, Math.floor(Date.now() / 1000)]);
+    if (result.rowCount !== 1) throw new HttpError(409, 'PURCHASE_CREATION_CONFLICT', 'The purchase could not be completed safely.');
+    return result.rows[0];
+  }
+  async failZapPurchaseCreation(id) {
+    await this.pool.query(`UPDATE zap_purchases SET status = 'failed', updated_at = $2
+      WHERE id = $1 AND status = 'creating'`, [id, Math.floor(Date.now() / 1000)]);
+  }
+  async issueDownloadGrantForPurchase({ offerId, purchaseId, licenseEventId, videoId, expiresInSeconds = 3600, maxUses = 5 }) {
+    const rawToken = randomBytes(32).toString('hex');
+    const grantTokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = Math.floor(Date.now() / 1000) + expiresInSeconds;
+    await this.pool.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses)
+      VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8)
+      ON CONFLICT DO NOTHING`,
+      [randomUUID(), offerId, purchaseId, licenseEventId, videoId, grantTokenHash, expiresAt, maxUses]);
+    return { grantToken: rawToken, expiresAt };
+  }
+
+  async getDownloadGrantForPurchase(purchaseId) {
+    const row = (await this.pool.query('SELECT * FROM download_grants WHERE purchase_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1', [purchaseId])).rows[0];
+    return row || null;
+  }
+  async registerExternalPurchaseAssociation({ id, offerId, externalReference, credentialTokenHash }) {
+    await this.pool.query(`INSERT INTO external_purchase_associations(id, offer_id, external_reference, credential_token_hash)
+      VALUES ($1,$2,$3,$4)`,
+      [id, offerId, externalReference, credentialTokenHash]);
+    return { id };
+  }
+  async getExternalPurchaseAssociationByToken(tokenHash) {
+    return (await this.pool.query('SELECT * FROM external_purchase_associations WHERE credential_token_hash = $1 AND consumed_at IS NULL', [tokenHash])).rows[0] || null;
+  }
+  async consumeExternalPurchaseAssociation(tokenHash, now) {
+    const result = await this.pool.query(`UPDATE external_purchase_associations SET consumed_at = to_timestamp($2::double precision)
+      WHERE credential_token_hash = $1 AND consumed_at IS NULL RETURNING *`, [tokenHash, now]);
+    return result.rows[0];
+  }
+  async getVideo(id) {
+    return (await this.pool.query('SELECT * FROM videos WHERE id = $1', [id])).rows[0]?.document;
+  }
+  async getDownloadGrantByToken(tokenHash) {
+    return (await this.pool.query('SELECT * FROM download_grants WHERE token_hash = $1', [tokenHash])).rows[0];
+  }
+  async consumeDownloadGrant(tokenHash, now) {
+    const result = await this.pool.query(`UPDATE download_grants SET use_count = use_count + 1
+      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > to_timestamp($2::double precision)
+      AND use_count < max_uses RETURNING *`, [tokenHash, now]);
+    return result.rows[0];
+  }
+  async revokeDownloadGrant(id) {
+    await this.pool.query('UPDATE download_grants SET revoked_at = now() WHERE id = $1', [id]);
+  }
+  async getZapPurchaseForBuyer(id, accessTokenHash) {
+    return (await this.pool.query('SELECT * FROM zap_purchases WHERE id = $1 AND access_token_hash = $2',
+      [id, accessTokenHash])).rows[0];
+  }
+  async claimZapReceiptCheck(id, now) {
+    const result = await this.pool.query(`UPDATE zap_purchases SET receipt_attempts = receipt_attempts + 1,
+      next_receipt_check_at = $2 + LEAST(600, 2 ^ LEAST(receipt_attempts, 9)), updated_at = $2
+      WHERE id = $1 AND status = 'pending' AND next_receipt_check_at <= $2 RETURNING *`, [id, now]);
+    return result.rows[0];
+  }
+  async verifyZapPurchase({ purchaseId, receiptEvent, settledAt, licenseEvent }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const purchase = (await client.query('SELECT * FROM zap_purchases WHERE id = $1 FOR UPDATE', [purchaseId])).rows[0];
+      if (!purchase) throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
+      if (purchase.status === 'verified') { await client.query('COMMIT'); return { verified: false }; }
+      if (purchase.status !== 'pending') { await client.query('COMMIT'); return { verified: false }; }
+      const offer = (await client.query('SELECT document FROM offers WHERE id = $1 FOR UPDATE', [purchase.offer_id])).rows[0]?.document;
+      if (!offer || offer.event_id !== purchase.offer_event_id || offer.status !== 'published') {
+        throw new HttpError(409, 'OFFER_NOT_PURCHASABLE', 'The signed offer is no longer available for licensing.');
+      }
+      await client.query(`INSERT INTO nostr_outbox(event_id, offer_id, event) VALUES ($1, $2, $3)`,
+        [licenseEvent.id, purchase.offer_id, licenseEvent]);
+      const nextOffer = {
+        ...offer,
+        status: 'licensing',
+        license_event_id: licenseEvent.id,
+        licensed_at: settledAt,
+        payment: {
+          provider: 'nostr-zap', invoice_id: purchase.payment_hash, payment_hash: purchase.payment_hash,
+          request: purchase.invoice_request, amount_sats: Number(purchase.amount_sats), status: 'attested',
+          reference: purchase.id, expires_at: Number(purchase.invoice_expires_at), settled_at: settledAt
+        }
+      };
+      await client.query('UPDATE offers SET document = $2 WHERE id = $1', [purchase.offer_id, nextOffer]);
+      await client.query(`UPDATE zap_purchases SET status = 'verified', receipt_event_id = $2,
+        receipt_event = $3, settled_at = $4, updated_at = $4 WHERE id = $1`,
+      [purchaseId, receiptEvent.id, receiptEvent, settledAt]);
+      // Issue the download grant atomically within the same transaction so the
+      // token is only minted once the purchase is verified and the offer is licensed.
+      let downloadGrant = null;
+      if (nextOffer.video_id) {
+        const rawToken = randomBytes(32).toString('hex');
+        const grantTokenHash = createHash('sha256').update(rawToken).digest('hex');
+        const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+        await client.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses)
+          VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8)
+          ON CONFLICT DO NOTHING`,
+          [randomUUID(), nextOffer.id, purchaseId, licenseEvent.id, nextOffer.video_id, grantTokenHash, expiresAt, 5]);
+        downloadGrant = { grantToken: rawToken, expiresAt };
+      }
+      await client.query('COMMIT');
+      return { verified: true, purchase, offer: nextOffer, downloadGrant };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
   }
   async idempotent(scope, digest, work) {
     const client = await this.pool.connect();

@@ -117,12 +117,13 @@ test('the signature covers exactly the string Cloudinary reconstructs', () => {
   const session = 'a'.repeat(32);
   const issued = cloudinary.createUploadAuthorization({ uploadSessionId: session, timestamp: 1790888846 });
   const expected = createHash('sha1')
-    .update(`context=contentport_session=${session}&folder=${FOLDER}&timestamp=1790888846` + SECRET)
+    .update(`context=contentport_session=${session}&folder=${FOLDER}&timestamp=1790888846&type=authenticated` + SECRET)
     .digest('hex');
   assert.equal(issued.signature, expected);
   assert.equal(issued.resource_type, 'video', 'still returned, the browser needs it for the upload URL');
+  assert.equal(issued.type, 'authenticated', 'uploaded assets must not be publicly deliverable');
   assert.deepEqual(Object.keys(issued).sort(),
-    ['allowed_formats', 'api_key', 'cloud_name', 'context', 'folder', 'resource_type', 'signature', 'timestamp', 'upload_session_id']);
+    ['allowed_formats', 'api_key', 'cloud_name', 'context', 'folder', 'resource_type', 'signature', 'timestamp', 'type', 'upload_session_id']);
 });
 
 test('a media-management parameter can never leak into the signature', () => {
@@ -213,7 +214,7 @@ test('a video referenced by an offer cannot be deleted', async () => {
   const { content, service } = setup();
   const { video } = await upload(content, creator);
   await service.create({ pubkey: creator, key: 'offer-key-0001', digest: 'o1',
-    body: { video_id: video.id, brand: 'Acme', amount_sats: 5000, usage_rights: 'Social use', duration: { type: 'fixed', days: 30 } } });
+    body: { video_id: video.id, brand: 'Acme', lightning_address: 'creator@example.org', amount_sats: 5000, usage_rights: 'Social use', duration: { type: 'fixed', days: 30 } } });
   await assert.rejects(content.remove({ id: video.id, pubkey: creator }), { status: 409 });
 });
 
@@ -234,7 +235,7 @@ test('creating an offer from a video resolves the canonical media reference serv
   const { content, service } = setup();
   const { video } = await upload(content, creator);
   const created = await service.create({ pubkey: creator, key: 'offer-key-0001', digest: 'o1', body: {
-    video_id: video.id, brand: 'Acme Kenya', amount_sats: 5000, usage_rights: 'Organic social use',
+    video_id: video.id, brand: 'Acme Kenya', lightning_address: 'creator@example.org', amount_sats: 5000, usage_rights: 'Organic social use',
     duration: { type: 'fixed', days: 30 } } });
   assert.equal(created.status, 201);
   assert.equal(created.body.video_id, video.id);
@@ -253,13 +254,13 @@ test('a client cannot override the media reference of a video-backed offer', asy
   const { video } = await upload(content, creator);
   await assert.rejects(service.create({ pubkey: creator, key: 'offer-key-0001', digest: 'o1', body: {
     video_id: video.id, content_url: 'https://attacker.example/evil.mp4', content_sha256: '0'.repeat(64),
-    brand: 'Acme', amount_sats: 5000, usage_rights: 'Social use', duration: { type: 'perpetual' } } }), { status: 400 });
+    brand: 'Acme', lightning_address: 'creator@example.org', amount_sats: 5000, usage_rights: 'Social use', duration: { type: 'perpetual' } } }), { status: 400 });
 });
 
 test('a creator cannot create an offer from another creator’s video, and offers require a ready video', async () => {
   const { content, service } = setup();
   const { video } = await upload(content, creator);
-  const draft = { brand: 'Acme', amount_sats: 5000, usage_rights: 'Social use', duration: { type: 'perpetual' } };
+  const draft = { brand: 'Acme', lightning_address: 'creator@example.org', amount_sats: 5000, usage_rights: 'Social use', duration: { type: 'perpetual' } };
   await assert.rejects(service.create({ pubkey: other, key: 'other-key-001', digest: 'o2', body: { ...draft, video_id: video.id } }), { status: 404 });
   await assert.rejects(service.create({ pubkey: creator, key: 'miss-key-0001', digest: 'o3', body: { ...draft, video_id: 'nope' } }), { status: 404 });
 
@@ -272,7 +273,7 @@ test('the creator library reports the authoritative offer relationship for each 
   const withOffer = await upload(content, creator);
   const without = await upload(content, creator, { public_id: `${FOLDER}/bare` });
   const created = await service.create({ pubkey: creator, key: 'offer-key-0001', digest: 'o1', body: {
-    video_id: withOffer.video.id, brand: 'Acme', amount_sats: 5000, usage_rights: 'Social use', duration: { type: 'fixed', days: 30 } } });
+    video_id: withOffer.video.id, brand: 'Acme', lightning_address: 'creator@example.org', amount_sats: 5000, usage_rights: 'Social use', duration: { type: 'fixed', days: 30 } } });
   offers.set(created.body.id, { ...created.body, status: 'published' });
   const library = await content.listMine({ pubkey: creator });
   const linked = library.body.videos.find(entry => entry.video.id === withOffer.video.id);
@@ -289,13 +290,13 @@ test('discovery returns only published offers and never the unrestricted origina
   const { content, service, offers } = setup();
   const { video } = await upload(content, creator);
   const draft = await service.create({ pubkey: creator, key: 'offer-key-0001', digest: 'o1', body: {
-    video_id: video.id, title: 'Mountain view', description: 'A drone pass', brand: 'Acme', amount_sats: 5000,
+    video_id: video.id, title: 'Mountain view', description: 'A drone pass', brand: 'Acme', lightning_address: 'creator@example.org', amount_sats: 5000,
     usage_rights: 'Social use', duration: { type: 'fixed', days: 30 } } });
   const published = { ...draft.body, status: 'published' };
   offers.set(published.id, published);
   // Draft, publishing and licensed offers are not purchasable and are not listed.
   const other = await service.create({ pubkey: creator, key: 'offer-key-0002', digest: 'o2', body: {
-    video_id: video.id, brand: 'Acme', amount_sats: 1, usage_rights: 'x', duration: { type: 'perpetual' } } });
+    video_id: video.id, brand: 'Acme', lightning_address: 'creator@example.org', amount_sats: 1, usage_rights: 'x', duration: { type: 'perpetual' } } });
   offers.set(other.body.id, { ...other.body, status: 'licensed' });
   offers.set('draft-only', { ...other.body, id: 'draft-only', status: 'draft' });
 
@@ -328,7 +329,7 @@ test('discovery returns only published offers and never the unrestricted origina
 test('discovery falls back to the offer content reference when no video is linked', async () => {
   const { service, offers } = setup();
   const created = await service.create({ pubkey: creator, key: 'offer-key-0001', digest: 'o1', body: {
-    brand: 'Acme', content_url: 'https://cdn.example.com/preview.jpg', content_sha256: '0'.repeat(64),
+    brand: 'Acme', lightning_address: 'creator@example.org', content_url: 'https://cdn.example.com/preview.jpg', content_sha256: '0'.repeat(64),
     amount_sats: 250, usage_rights: 'Social use', duration: { type: 'perpetual' } } });
   offers.set(created.body.id, { ...created.body, status: 'published' });
   const { body } = await service.discover();
