@@ -55,7 +55,8 @@ const purchaseStatusResponse = object({
   purchaseId: id,
   status: { type: 'string', enum: ['PAYMENT_PENDING', 'PAYMENT_ATTESTED', 'LICENSED', 'EXPIRED'] },
   receiptState: { type: 'string', enum: ['awaiting_receipt', 'verified'] },
-  licenseNostrEventId: hex, licensedAt: integer
+  licenseNostrEventId: hex, licensedAt: integer,
+  downloadGrantToken: hex, downloadGrantExpiresAt: integer
 }, ['purchaseId', 'status', 'receiptState']);
 const paymentStatusResponse = object({
   offerId: id,
