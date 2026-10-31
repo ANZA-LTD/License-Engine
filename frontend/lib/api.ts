@@ -234,6 +234,37 @@ export function getStoredPurchaseId(offerId: string): string | null {
   }
   return null;
 }
+/**
+ * Persist a download grant token issued by the backend during license
+ * attestation. The token is consumed directly by the offer page without
+ * requiring a separate issueDownloadGrant round-trip.
+ */
+export function persistDownloadGrant(offerId: string, grantToken: string, expiresAt: number | null) {
+  if (typeof window === "undefined") return;
+  if (!/^[0-9a-f]{64}$/.test(grantToken)) return;
+  try {
+    sessionStorage.setItem(downloadGrantKey(offerId), JSON.stringify({ grantToken, expiresAt }));
+  } catch {
+    /* ignore */
+  }
+}
+export function getStoredDownloadGrant(offerId: string): { grantToken: string; expiresAt: number | null } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(downloadGrantKey(offerId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { grantToken?: string; expiresAt?: number | null };
+    if (parsed && typeof parsed.grantToken === "string" && /^[0-9a-f]{64}$/.test(parsed.grantToken)) {
+      return { grantToken: parsed.grantToken, expiresAt: parsed.expiresAt ?? null };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+function downloadGrantKey(offerId: string) {
+  return `anza:download-grant:${offerId}`;
+}
 export async function createPaymentRequest(offerId: string): Promise<PaymentRequestResponse> {
   const credentials = purchaseCredentials(offerId);
   const response = await fetch(apiUrl(`/offers/${offerId}/payment`), {
