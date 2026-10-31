@@ -88,6 +88,10 @@ export interface PurchaseStatusResponse {
   receiptState: "awaiting_receipt" | "temporarily_unavailable" | "verified";
   licenseNostrEventId?: string;
   licensedAt?: number;
+  /** Raw 64-char hex download grant token issued atomically during license attestation */
+  downloadGrantToken?: string;
+  /** Unix timestamp when the download grant expires */
+  downloadGrantExpiresAt?: number;
 }
 
 // ---------------------------------------------------------------------------

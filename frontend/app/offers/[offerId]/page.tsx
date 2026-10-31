@@ -10,7 +10,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ContentPreview } from "@/components/offer/ContentPreview";
 import { VerificationCard } from "@/components/offer/VerificationCard";
 import { LicenseDetails } from "@/components/offer/LicenseDetails";
-import { getMyOffer, getOffer, issueDownloadGrant, consumeDownloadGrant, getStoredPurchaseId } from "@/lib/api";
+import { getMyOffer, getOffer, issueDownloadGrant, consumeDownloadGrant, getStoredPurchaseId, getStoredDownloadGrant } from "@/lib/api";
 import { Offer } from "@/lib/types";
 
 /**
@@ -246,16 +246,39 @@ function LicensedView({ offer }: { offer: Offer }) {
     document.body.removeChild(link);
   };
 
-  const initiateDownload = async (allowExpiryRetry: boolean) => {
-    const purchaseIdForDownload = offer.purchaseId ?? getStoredPurchaseId(offer.offerId);
-    if (!purchaseIdForDownload) {
-      setDownloadError("Purchase details not available for download.");
-      setDownloadStatus("error");
-      return;
+  // Resolve the download grant token in priority order:
+  //   1. Query parameter (set by the pay page polling flow)
+  //   2. sessionStorage (persisted by the pay page polling flow)
+  //   3. issueDownloadGrant API call (legacy fallback)
+  const resolveGrantToken = async (): Promise<string | null> => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search.slice(1));
+      const queryToken = params.get("grantToken");
+      if (queryToken && /^[0-9a-f]{64}$/.test(queryToken)) return queryToken;
     }
+    const stored = getStoredDownloadGrant(offer.offerId);
+    if (stored && /^[0-9a-f]{64}$/.test(stored.grantToken)) return stored.grantToken;
+    return null;
+  };
+
+  const initiateDownload = async (allowExpiryRetry: boolean) => {
     setDownloadStatus("downloading");
     setDownloadError(null);
     try {
+      // Prefer a pre-issued grant token from the polling flow.
+      const existingToken = await resolveGrantToken();
+      if (existingToken) {
+        await triggerFileDownload(existingToken);
+        setDownloadStatus("success");
+        return;
+      }
+      // Fall back to requesting a new grant from the backend.
+      const purchaseIdForDownload = offer.purchaseId ?? getStoredPurchaseId(offer.offerId);
+      if (!purchaseIdForDownload) {
+        setDownloadError("Purchase details not available for download.");
+        setDownloadStatus("error");
+        return;
+      }
       const grant = await issueDownloadGrant(purchaseIdForDownload, offer.offerId);
       await triggerFileDownload(grant.grantToken);
       setDownloadStatus("success");
@@ -264,6 +287,12 @@ function LicensedView({ offer }: { offer: Offer }) {
       const isExpiredOrMissing = /expired|not found|revoked/i.test(message);
       if (allowExpiryRetry && isExpiredOrMissing) {
         try {
+          const purchaseIdForDownload = offer.purchaseId ?? getStoredPurchaseId(offer.offerId);
+          if (!purchaseIdForDownload) {
+            setDownloadError("Purchase details not available for download.");
+            setDownloadStatus("error");
+            return;
+          }
           const grant = await issueDownloadGrant(purchaseIdForDownload, offer.offerId);
           await triggerFileDownload(grant.grantToken);
           setDownloadStatus("success");

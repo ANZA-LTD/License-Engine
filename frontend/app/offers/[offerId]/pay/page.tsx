@@ -14,7 +14,7 @@ import { ContentPreview } from "@/components/offer/ContentPreview";
 import { LightningQR } from "@/components/payment/LightningQR";
 import { InvoiceDisplay } from "@/components/payment/InvoiceDisplay";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
-import { createPaymentRequest, getOffer, getOfferStatus, getPurchaseStatus, storePurchaseId } from "@/lib/api";
+import { createPaymentRequest, getOffer, getOfferStatus, getPurchaseStatus, storePurchaseId, persistDownloadGrant } from "@/lib/api";
 import { Offer, PaymentRequestResponse } from "@/lib/types";
 import { LICENSE_TYPE_LABELS } from "@/lib/licenseTypes";
 
@@ -77,16 +77,27 @@ export default function PaymentPage({
     };
   }, [params.offerId]);
 
-  // Step 2: poll for confirmation once we have an active invoice.
+// Step 2: poll for confirmation once we have an active invoice.
   useEffect(() => {
     if (!payment || confirmed) return;
 
     pollRef.current = setInterval(async () => {
       try {
-          const status = payment.purchaseId
-            ? await getPurchaseStatus(payment.purchaseId, params.offerId)
-            : await getOfferStatus(params.offerId);
+        const status = payment.purchaseId
+          ? await getPurchaseStatus(payment.purchaseId, params.offerId)
+          : await getOfferStatus(params.offerId);
         setPollError(null);
+        // When the backend issues a download grant atomically during license
+        // attestation, consume it immediately and redirect to the licensed view.
+        if (status.downloadGrantToken && (status.status === "LICENSED" || status.status === "PAYMENT_ATTESTED")) {
+          setConfirmed(true);
+          if (pollRef.current) clearInterval(pollRef.current);
+          // Persist the grant token so the offer page can consume it without
+          // falling back to a separate issueDownloadGrant call.
+          persistDownloadGrant(params.offerId, status.downloadGrantToken, status.downloadGrantExpiresAt ?? null);
+          window.location.replace(`/offers/${params.offerId}?grantToken=${encodeURIComponent(status.downloadGrantToken)}`);
+          return;
+        }
         if (status.status === "LICENSED" || status.status === "PAYMENT_ATTESTED" || status.status === "PAYMENT_SETTLED") {
           setConfirmed(true);
           if (pollRef.current) clearInterval(pollRef.current);
