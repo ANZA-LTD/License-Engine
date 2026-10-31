@@ -14,5 +14,17 @@ steps:
       - '--build-arg'
       - 'NEXT_PUBLIC_NOSTR_ATTESTOR_PUBKEY=22b55780785d437e3357b4e4c5ad10c8c4c96ed9616bf70a57591948433ec2e1'
       - '.'
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'licence-engine-frontend'
+      - '--image'
+      - 'gcr.io/anza-staging/licence-engine-frontend:$_TAG'
+      - '--region'
+      - 'africa-south1'
+      - '--platform'
+      - 'managed'
+      - '--quiet'
 images:
   - 'gcr.io/anza-staging/licence-engine-frontend:$_TAG'
