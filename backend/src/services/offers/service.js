@@ -251,7 +251,7 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
       }
       if (enriched.creator_pubkey !== pubkey && enriched.payment) {
         const { payment, ...publicOffer } = enriched;
-        return { status: 200, body: { ...publicOffer, payment: {
+        return { status: 200, body: { ...publicOffer, purchaseId: payment.reference || null, payment: {
           status: payment.status,
           ...(payment.settled_at ? { settled_at: payment.settled_at } : {})
         } } };
