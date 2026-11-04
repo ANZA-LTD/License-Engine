@@ -3,17 +3,18 @@
 // and is used to sign, never returned. Media reference URLs are built here so
 // transformation strings are not scattered through frontend components.
 import { createHash } from 'node:crypto';
+import { v2 as cloudinarySdk } from 'cloudinary';
 import { HttpError } from '../../utils/errors.js';
 
 export const RESOURCE_TYPE = 'video';
 export const ALLOWED_FORMATS = ['mp4', 'webm', 'mov'];
 
 // The public preview a brand may watch before purchase. A text layer is the
-// watermark; it needs no pre-configured named overlay in the Cloudinary account.
-// The unrestricted original is never built here for discovery use.
+// default watermark; an image overlay can replace it when watermark public ids
+// are configured. The unrestricted original is never built here for discovery use.
 const PREVIEW = ['w_640', 'h_360', 'c_fill', 'q_auto',
   'l_text:Arial_36_bold:ANZA%20PREVIEW', 'co_white', 'o_40', 'fl_layer_apply'];
-const THUMBNAIL = ['so_0', 'w_480', 'h_270', 'c_fill', 'q_auto', 'f_jpg'];
+const THUMBNAIL = ['w_480', 'h_270', 'c_fill', 'q_auto', 'f_jpg'];
 
 // Media reference fields shared by a stored video and the URL builders below.
 export const mediaRef = video => ({ cloudName: video.cloud_name, publicId: video.public_id, format: video.format });
@@ -24,11 +25,42 @@ export function deliveryUrl({ cloudName, publicId, transformation = [], format =
   return `https://res.cloudinary.com/${cloudName}/${RESOURCE_TYPE}/upload/${path}${publicId}.${format}`;
 }
 
-export const previewUrl = (media, format) =>
-  deliveryUrl({ ...media, transformation: PREVIEW, format: format || media.format || 'mp4' });
+// Builds a signed delivery URL for authenticated Cloudinary resources.
+// The API secret signs the transformation string; the browser receives only
+// the signed URL, never the secret.
+export function signedDeliveryUrl({ cloudName, publicId, transformation = [], format = 'mp4' }) {
+  if (!cloudName || !publicId) throw new HttpError(500, 'MEDIA_UNAVAILABLE', 'The media record is missing its Cloudinary reference.');
+  return cloudinarySdk.url(publicId, {
+    resource_type: RESOURCE_TYPE,
+    type: 'authenticated',
+    format,
+    raw_transformation: transformation.length ? transformation.join(',') : undefined,
+    sign_url: true,
+  });
+}
 
-export const thumbnailUrl = (media, format) =>
-  deliveryUrl({ ...media, transformation: THUMBNAIL, format: format || media.format || 'mp4' });
+export const previewUrl = (media, format, watermark) => {
+  const transformations = [...PREVIEW];
+  if (watermark) {
+    // Replace the text watermark (l_text:..., co_white, o_40) with the
+    // configured image watermark overlay before fl_layer_apply applies layers.
+    const textIndex = transformations.findIndex(t => t.startsWith('l_text:'));
+    if (textIndex !== -1) {
+      transformations.splice(textIndex, 4, `l_${watermark},w_0.25,h_0.25,c_fit,o_40,fl_layer_apply`);
+    } else {
+      transformations.unshift(`l_${watermark},w_0.25,h_0.25,c_fit,o_40,fl_layer_apply`);
+    }
+  }
+  return signedDeliveryUrl({ ...media, transformation: transformations, format: format || media.format || 'mp4' });
+};
+
+export const thumbnailUrl = (media, format, watermark) => {
+  const transformations = [...THUMBNAIL];
+  if (watermark) {
+    transformations.push(`l_${watermark},w_0.25,h_0.25,c_fit,o_40,fl_layer_apply`);
+  }
+  return signedDeliveryUrl({ ...media, transformation: transformations, format: format || media.format || 'mp4' });
+};
 
 // Owner-only reference. Discovery never calls this.
 export const originalUrl = media => deliveryUrl(media);
@@ -46,13 +78,16 @@ function signaturePayload(params) {
     .join('&');
 }
 
-export function createCloudinary({ cloudName, apiKey, apiSecret, folder }) {
+export function createCloudinary({ cloudName, apiKey, apiSecret, folder, watermarkLandscape, watermarkPortrait }) {
   if (!cloudName || !apiKey || !apiSecret) return null;
+  cloudinarySdk.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret });
   const root = `${folder.replace(/\/+$/, '')}/`;
   return {
     name: 'cloudinary',
     cloudName,
     folder,
+    watermarkLandscape,
+    watermarkPortrait,
     // Authorises one direct upload for one creator. The session id is carried in
     // a signed Cloudinary context field and must be echoed back at registration,
     // so an asset can only be registered by the creator whose signed
@@ -62,10 +97,11 @@ export function createCloudinary({ cloudName, apiKey, apiSecret, folder }) {
     // signaturePayload strips the media-management keys, so a caller cannot
     // reintroduce the mismatch.
     createUploadAuthorization({ uploadSessionId, timestamp, ...signed }) {
-      const params = { ...signed, context: `contentport_session=${uploadSessionId}`, folder, timestamp };
+      const params = { ...signed, context: `contentport_session=${uploadSessionId}`, folder, timestamp, type: 'authenticated' };
       return {
         cloud_name: cloudName, api_key: apiKey, resource_type: RESOURCE_TYPE, folder,
         context: params.context, upload_session_id: uploadSessionId, timestamp,
+        type: 'authenticated',
         signature: createHash('sha1').update(signaturePayload(params) + apiSecret).digest('hex'),
         allowed_formats: ALLOWED_FORMATS
       };
@@ -82,6 +118,12 @@ export function createCloudinary({ cloudName, apiKey, apiSecret, folder }) {
       return createHash('sha256')
         .update(`contentport.asset.v1\u0000${cloudName}\u0000${RESOURCE_TYPE}\u0000${publicId}\u0000${assetVersion}`)
         .digest('hex');
+    },
+    signedOriginalUrl(media, expiresAt) {
+      return cloudinarySdk.url(media.publicId, {
+        resource_type: RESOURCE_TYPE, type: 'authenticated', format: media.format,
+        sign_url: true, expires_at: expiresAt
+      });
     }
   };
 }

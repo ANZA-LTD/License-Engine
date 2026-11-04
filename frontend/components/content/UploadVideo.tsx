@@ -41,6 +41,7 @@ function uploadToCloudinary(
     form.append("signature", params.signature);
     form.append("folder", params.folder);
     form.append("context", params.context);
+    form.append("type", "authenticated");
     // resource_type is deliberately not a form field. It travels in the URL path
     // and Cloudinary excludes it from the signed parameter string, so sending it
     // here would be redundant at best.
