@@ -100,3 +100,6 @@ https://www.postman.com/galactic-escape-972188/anza/collection/g4eqixa/contentpo
 - DB errors: run migrations
 - Cloudinary errors: verify secret/timestamp
 - Payment pending: check receipt on relays
+## Architecture
+
+See the architecture section of the main README.

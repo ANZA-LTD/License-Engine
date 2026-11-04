@@ -305,3 +305,7 @@ Please do not commit `.env` files, macaroons, private keys, access tokens, or ge
 Built for creators who should be able to say: **this is my work, these are my terms, and this is the record.**
 
 </div>
+
+## Architecture
+
+See the architecture section of the main README.
