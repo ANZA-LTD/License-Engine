@@ -1,5 +1,5 @@
-import pg from 'pg';
 import { existsSync } from 'node:fs';
+import { createPool } from './database/pool.js';
 import { verifyEvent } from 'nostr-tools/pure';
 import { readConfig } from './config/index.js';
 import { PostgresContentStore } from './repositories/videos.js';
@@ -16,7 +16,7 @@ const localEnvFile = new URL('../.env', import.meta.url);
 if (existsSync(localEnvFile)) process.loadEnvFile(localEnvFile);
 
 const config = readConfig();
-const pool = new pg.Pool({ connectionString: config.databaseUrl, connectionTimeoutMillis: 5000 });
+const pool = createPool(config.databaseUrl);
 const store = new PostgresContentStore(pool);
 const checkDatabaseReadiness = async () => {
   // LIMIT 0 checks that every required table exists without reading customer data.
