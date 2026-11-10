@@ -1,6 +1,7 @@
-import { User, Calendar, ShieldQuestion, Bitcoin } from "lucide-react";
+import { User, Calendar, ShieldQuestion, Tag } from "lucide-react";
 import { Offer } from "@/lib/types";
 import { LICENSE_TYPE_LABELS } from "@/lib/licenseTypes";
+import { formatPrice } from "@/lib/price";
 
 /**
  * The label/value grid used on both the public offer page (spec section 11)
@@ -22,9 +23,9 @@ export function LicenseDetails({ offer, brandLabel = "Licensed To" }: { offer: O
         value={offer.licenseDescription}
       />
       <Field
-        icon={<Bitcoin size={14} className="text-bitcoin" />}
+        icon={<Tag size={14} />}
         label="Price"
-        value={`${offer.priceSats.toLocaleString()} sats`}
+        value={formatPrice(offer.price, offer.priceSats)}
       />
     </div>
   );

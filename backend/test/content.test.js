@@ -278,7 +278,7 @@ test('the creator library reports the authoritative offer relationship for each 
   const library = await content.listMine({ pubkey: creator });
   const linked = library.body.videos.find(entry => entry.video.id === withOffer.video.id);
   const bare = library.body.videos.find(entry => entry.video.id === without.video.id);
-  assert.deepEqual(linked.offers, [{ offer_id: created.body.id, status: 'published', price_sats: 5000, created_at: 1000 }]);
+  assert.deepEqual(linked.offers, [{ offer_id: created.body.id, status: 'published', price_sats: 5000, price: null, created_at: 1000 }]);
   assert.deepEqual(bare.offers, []);
 });
 

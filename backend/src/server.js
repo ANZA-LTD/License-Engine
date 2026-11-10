@@ -9,6 +9,7 @@ import { createCloudinary } from './services/media/cloudinary.js';
 import { createRelayPublisher } from './services/nostr/publisher.js';
 import { createLndClient } from './services/payments/lnd-client.js';
 import { createZapPaymentProvider } from './services/payments/zap-provider.js';
+import { createBtcRateProvider } from './services/payments/rates.js';
 import { createApp } from './app.js';
 
 // Load local development settings when present; platform-injected environment variables work without a file.
@@ -27,7 +28,8 @@ const paymentProvider = config.paymentImplementation === 'polar-lnd'
   ? createLndClient({ restUrl: config.lndRestUrl, macaroon: config.lndMacaroon }) : null;
 const zapPaymentProvider = config.paymentImplementation === 'lnurl-zap'
   ? createZapPaymentProvider({ network: config.paymentNetwork, relays: config.relays }) : null;
-const service = createOfferService({ store, verifyEvent, paymentProvider, zapPaymentProvider, ...config, cloudinary: createCloudinary(config.cloudinary) });
+const rateProvider = createBtcRateProvider({ url: config.btcRateUrl });
+const service = createOfferService({ store, verifyEvent, paymentProvider, zapPaymentProvider, rateProvider, ...config, cloudinary: createCloudinary(config.cloudinary) });
 const contentService = createContentService({ store, cloudinary: createCloudinary(config.cloudinary) });
 const publish = createRelayPublisher({ relays: config.relays });
 const server = createApp({ service, contentService, verifyEvent, origin: config.origin, corsOrigins: config.corsOrigins,

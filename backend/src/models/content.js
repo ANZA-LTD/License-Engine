@@ -16,6 +16,8 @@ const https = { type: 'string', pattern: '^https://[^\\s]+$', maxLength: 2048 };
 // express because the folder is deployment configuration.
 const publicId = { type: 'string', pattern: '^[A-Za-z0-9_\\-/]{1,200}$' };
 const recordId = { type: 'string', pattern: '^[A-Za-z0-9_-]{1,100}$' };
+// Fiat price (minor units) for offers priced in a currency rather than sats.
+const price = object({ currency: { type: 'string', pattern: '^[A-Z]{3}$' }, amount_minor: positive });
 const licenseDuration = { oneOf: [
   object({ type: { const: 'fixed' }, days: { ...positive, maximum: 36500 } }),
   object({ type: { const: 'perpetual' } })
@@ -54,7 +56,8 @@ const videoRecord = object({
 const offerSummary = object({
   offer_id: recordId,
   status: status('draft', 'publishing', 'published', 'licensing', 'licensed'),
-  price_sats: positive,
+  price_sats: nullable(positive),
+  price: nullable(price),
   created_at: time
 });
 
@@ -82,7 +85,8 @@ const discoveryListing = object({
   thumbnail_url: nullable(https),
   duration_seconds: nullable({ ...time, minimum: 0 }),
   license_duration: licenseDuration,
-  price_sats: positive,
+  price_sats: nullable(positive),
+  price: nullable(price),
   status: status('published', 'licensing'),
   created_at: time
 });

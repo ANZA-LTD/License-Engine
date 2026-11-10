@@ -31,7 +31,13 @@ export function buildLicenseEvent({ kind, attestorPubkey, offerEvent, settlement
   // (fiat) payments are priced by the external payment service, so the
   // placeholder amount_sats must not be compared for external attestations.
   if (!isExternal) {
-    if (settlement.amount_sats !== offer.terms.amount_sats) throw new TypeError('Payment amount mismatch');
+    // A sats-priced offer must be paid its exact signed amount. A fiat-priced
+    // offer is paid at the live rate, so the settled amount is recorded instead.
+    if (offer.terms.amount_sats !== undefined) {
+      if (settlement.amount_sats !== offer.terms.amount_sats) throw new TypeError('Payment amount mismatch');
+    } else if (!Number.isSafeInteger(settlement.amount_sats) || settlement.amount_sats <= 0) {
+      throw new TypeError('Payment amount missing');
+    }
   }
   if (settlement.settled_at < offerEvent.created_at) throw new TypeError('Settlement predates offer');
   const endsAt = offer.terms.duration.type === 'perpetual' ? null

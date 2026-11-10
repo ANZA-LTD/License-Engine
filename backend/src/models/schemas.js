@@ -11,6 +11,19 @@ const enumeration = (...values) => ({ type: 'string', enum: values });
 const object = (properties) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 
 export const schemas = {};
+// A fiat price in the currency's minor unit (KES cents). Integer only, so no
+// floating-point arithmetic is ever applied to an amount.
+schemas.Price = object({
+  currency: { type: 'string', pattern: '^[A-Z]{3}$' },
+  amount_minor: { ...positive, maximum: 100000000000 }
+});
+// An offer is priced either in a fiat currency (price) or directly in satoshis
+// (amount_sats, the original format). A Lightning Address is optional: an offer
+// without one simply cannot be paid over Lightning.
+const pricing = { anyOf: [
+  { properties: { price: true }, required: ['price'] },
+  { properties: { amount_sats: true }, required: ['amount_sats'] }
+] };
 schemas.Terms = {
   type: 'object',
   properties: {
@@ -21,13 +34,15 @@ schemas.Terms = {
     content_url: { type: 'string', pattern: '^https://[^\\s]+$', maxLength: 2048 },
     content_sha256: hex,
     amount_sats: positive,
+    price: schemas.Price,
     usage_rights: text,
     duration: { oneOf: [
       object({ type: { const: 'fixed' }, days: { ...positive, maximum: 36500 } }),
       object({ type: { const: 'perpetual' } })
     ] }
   },
-  required: ['brand', 'content_url', 'content_sha256', 'amount_sats', 'usage_rights', 'duration'],
+  required: ['brand', 'content_url', 'content_sha256', 'usage_rights', 'duration'],
+  ...pricing,
   additionalProperties: false
 };
 schemas.Creator = object({ id, nostr_pubkey: hex, wallet_connection_ref: id, created_at: integer });
@@ -79,7 +94,8 @@ schemas.Settlement = {
 schemas.OfferDraft = {
   type: 'object',
   properties: { ...schemas.Terms.properties, video_id: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,100}$' } },
-  required: ['brand', 'lightning_address', 'amount_sats', 'usage_rights', 'duration'],
+  required: ['brand', 'usage_rights', 'duration'],
+  ...pricing,
   additionalProperties: false
 };
 Object.assign(schemas, buildCommerceSchemas(schemas));
