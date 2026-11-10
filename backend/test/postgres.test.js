@@ -27,7 +27,7 @@ test('PostgreSQL transactions, idempotency, outbox retry and acknowledgement', a
   const { default: pg } = await import('pg');
   pgModule = pg;
   await withSchema(async pool => {
-    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 4 });
+    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 6 });
     const store = new PostgresOfferStore(pool);
     const offer = { id: 'offer_test', creator_pubkey: 'a'.repeat(64), terms: {}, status: 'draft', event_id: null, created_at: 1000 };
     const work = async tx => { await tx.insertOffer(offer); return { status: 201, body: offer }; };
@@ -61,8 +61,8 @@ test('migration runner upgrades an existing schema, preserves rows, and rejects 
     }
     await pool.query('INSERT INTO offers(id, document) VALUES ($1, $2)', ['existing_offer', { status: 'published' }]);
 
-    assert.deepEqual(await applyMigrations(pool), { applied: 4, skipped: 0 });
-    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 4 });
+    assert.deepEqual(await applyMigrations(pool), { applied: 6, skipped: 0 });
+    assert.deepEqual(await applyMigrations(pool), { applied: 0, skipped: 6 });
     assert.deepEqual((await pool.query('SELECT document FROM offers WHERE id = $1', ['existing_offer'])).rows[0].document,
       { status: 'published' });
 
@@ -247,7 +247,7 @@ test('content layer persists ownership in the database and filters discovery by 
     await store.idempotent('offer', 'digest', tx => tx.insertOffer(draft));
     assert.equal((await pool.query('SELECT video_id FROM offers WHERE id = $1', ['offer_1'])).rows[0].video_id, video.id);
     assert.deepEqual(await store.listOffersForVideo(video.id),
-      [{ video_id: 'video_1', id: 'offer_1', status: 'draft', amount_sats: 5000, created_at: 2000 }]);
+      [{ video_id: 'video_1', id: 'offer_1', status: 'draft', amount_sats: 5000, price: null, created_at: 2000 }]);
 
     // Only published and licensing offers are discoverable.
     await pool.query('UPDATE offers SET document = jsonb_set(document, \'{status}\', \'"published"\') WHERE id = $1', ['offer_1']);

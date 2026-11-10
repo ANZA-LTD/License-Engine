@@ -5,9 +5,10 @@ import { originalUrl, previewUrl, thumbnailUrl, mediaRef, ALLOWED_FORMATS, RESOU
 
 const UPLOAD_SESSION_TTL = 3600;
 
-const attachOffers = rows => rows.map(row => ({
-  offer_id: row.id, status: row.status, price_sats: row.amount_sats, created_at: row.created_at
-}));
+const summary = row => ({
+  offer_id: row.id, status: row.status, price_sats: row.amount_sats ?? null, price: row.price ?? null, created_at: row.created_at
+});
+const attachOffers = rows => rows.map(summary);
 
 export function createContentService({ store, cloudinary, now = () => Math.floor(Date.now() / 1000) }) {
   const input = (schema, body) => {
@@ -80,7 +81,7 @@ export function createContentService({ store, cloudinary, now = () => Math.floor
       const byVideo = new Map();
       for (const row of offers) {
         if (!byVideo.has(row.video_id)) byVideo.set(row.video_id, []);
-        byVideo.get(row.video_id).push({ offer_id: row.id, status: row.status, price_sats: row.amount_sats, created_at: row.created_at });
+        byVideo.get(row.video_id).push(summary(row));
       }
       return { status: 200, body: { videos: videos.map(video => owned(video, byVideo.get(video.id) || [])) } };
     },

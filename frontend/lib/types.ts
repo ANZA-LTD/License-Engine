@@ -21,13 +21,17 @@ export interface Offer {
   preview_url?: string;
   thumbnail_url?: string | null;
   brandName: string;
-  priceSats: number;
+  /** Signed sats price (older offers). Null for fiat-priced offers. */
+  priceSats: number | null;
+  /** Signed fiat price, e.g. { currency: "KES", amount_minor: 400000 }. */
+  price: { currency: string; amount_minor: number } | null;
   creatorLightningAddress?: string;
   licenseType: LicenseType;
   licenseDescription: string;
   status: OfferStatus;
   nostrEventId: string;
   creatorHandle: string;
+  creatorPubkey: string;
   /** Only present once status === "LICENSED" */
   licensedAt?: string | number;
   /** Nostr event id of the license/payment confirmation event (kind: license_purchase) */
@@ -44,7 +48,9 @@ export interface CreateOfferPayload {
   description: string;
   contentUrl: string;
   brandName: string;
-  priceSats: number;
+  /** Price in whole Kenyan shillings. */
+  priceKes: number;
+  /** Optional: only needed to accept Bitcoin Lightning payments. */
   creatorLightningAddress: string;
   licenseType: LicenseType;
   licenseDescription: string;
@@ -132,7 +138,8 @@ export interface VideoRecord {
 export interface OfferSummary {
   offer_id: string;
   status: "draft" | "publishing" | "published" | "licensing" | "licensed";
-  price_sats: number;
+  price_sats: number | null;
+  price: { currency: string; amount_minor: number } | null;
   created_at: number;
 }
 
@@ -204,7 +211,8 @@ export interface DiscoveryListing {
   thumbnail_url: string | null;
   duration_seconds: number | null;
   license_duration: { type: "fixed"; days: number } | { type: "perpetual" };
-  price_sats: number;
+  price_sats: number | null;
+  price: { currency: string; amount_minor: number } | null;
   status: "published" | "licensing";
   created_at: number;
 }

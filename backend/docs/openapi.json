@@ -85,6 +85,25 @@
             "minimum": 1,
             "maximum": 9007199254740991
           },
+          "price": {
+            "type": "object",
+            "properties": {
+              "currency": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              },
+              "amount_minor": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000000
+              }
+            },
+            "required": [
+              "currency",
+              "amount_minor"
+            ],
+            "additionalProperties": false
+          },
           "usage_rights": {
             "type": "string",
             "minLength": 1,
@@ -130,9 +149,26 @@
           "brand",
           "content_url",
           "content_sha256",
-          "amount_sats",
           "usage_rights",
           "duration"
+        ],
+        "anyOf": [
+          {
+            "properties": {
+              "price": true
+            },
+            "required": [
+              "price"
+            ]
+          },
+          {
+            "properties": {
+              "amount_sats": true
+            },
+            "required": [
+              "amount_sats"
+            ]
+          }
         ],
         "additionalProperties": false
       },
@@ -176,6 +212,25 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
+          },
+          "price": {
+            "type": "object",
+            "properties": {
+              "currency": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              },
+              "amount_minor": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000000
+              }
+            },
+            "required": [
+              "currency",
+              "amount_minor"
+            ],
+            "additionalProperties": false
           },
           "usage_rights": {
             "type": "string",
@@ -224,10 +279,26 @@
         },
         "required": [
           "brand",
-          "lightning_address",
-          "amount_sats",
           "usage_rights",
           "duration"
+        ],
+        "anyOf": [
+          {
+            "properties": {
+              "price": true
+            },
+            "required": [
+              "price"
+            ]
+          },
+          {
+            "properties": {
+              "amount_sats": true
+            },
+            "required": [
+              "amount_sats"
+            ]
+          }
         ],
         "additionalProperties": false,
         "oneOf": [
@@ -547,9 +618,42 @@
                   ]
                 },
                 "price_sats": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 9007199254740991
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "price": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "currency": {
+                          "type": "string",
+                          "pattern": "^[A-Z]{3}$"
+                        },
+                        "amount_minor": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "currency",
+                        "amount_minor"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "status": {
                   "type": "string",
@@ -575,6 +679,7 @@
                 "duration_seconds",
                 "license_duration",
                 "price_sats",
+                "price",
                 "status",
                 "created_at"
               ],
@@ -888,9 +993,42 @@
                   ]
                 },
                 "price_sats": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 9007199254740991
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "price": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "currency": {
+                          "type": "string",
+                          "pattern": "^[A-Z]{3}$"
+                        },
+                        "amount_minor": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "currency",
+                        "amount_minor"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "created_at": {
                   "type": "integer",
@@ -902,6 +1040,7 @@
                 "offer_id",
                 "status",
                 "price_sats",
+                "price",
                 "created_at"
               ],
               "additionalProperties": false
@@ -1105,9 +1244,42 @@
                         ]
                       },
                       "price_sats": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 9007199254740991
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "price": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "currency": {
+                                "type": "string",
+                                "pattern": "^[A-Z]{3}$"
+                              },
+                              "amount_minor": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "currency",
+                              "amount_minor"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "created_at": {
                         "type": "integer",
@@ -1119,6 +1291,7 @@
                       "offer_id",
                       "status",
                       "price_sats",
+                      "price",
                       "created_at"
                     ],
                     "additionalProperties": false

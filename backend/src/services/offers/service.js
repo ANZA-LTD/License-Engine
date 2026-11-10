@@ -8,12 +8,13 @@ import { verifySpeedWebhook } from '../payments/speed.js';
 import { parseLightningAddress } from '../payments/lnurl.js';
 import { validateZapReceipt } from '../payments/zap.js';
 import { mediaRef, previewUrl, thumbnailUrl } from '../media/cloudinary.js';
+import { resolveOfferSats } from '../payments/rates.js';
 
 const DISCOVERY_LIMIT = 50;
 
 export function createOfferService({ store, verifyEvent, kind, attestorPubkey, attestorSecretKey = null,
   speedWebhookSecret, paymentProvider = null, zapPaymentProvider = null, paymentEnabled = true,
-  paymentNetwork = 'regtest', cloudinary = null, now = () => Math.floor(Date.now() / 1000) }) {
+  paymentNetwork = 'regtest', cloudinary = null, rateProvider = null, now = () => Math.floor(Date.now() / 1000) }) {
   const input = (schema, body) => {
     try { validate(schema, body); } catch (error) { throw new HttpError(400, 'VALIDATION_ERROR', error.message); }
   };
@@ -57,15 +58,16 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
     const offer = await store.getOffer(id);
     if (!offer || !['published', 'licensing', 'licensed'].includes(offer.status)) throw new HttpError(404, 'NOT_FOUND', 'Offer not found.');
     if (offer.status !== 'published' || offer.license_event_id) throw new HttpError(409, 'OFFER_ALREADY_LICENSED', 'This offer is no longer available for purchase.');
-    if (!offer.event_id || !offer.terms.lightning_address) throw new HttpError(409, 'OFFER_PAYMENT_DESTINATION_MISSING', 'This offer has no signed creator Lightning Address. The creator must publish a new offer.');
-    const amountMsat = offer.terms.amount_sats * 1000;
+    if (!offer.event_id || !offer.terms.lightning_address) throw new HttpError(409, 'LIGHTNING_UNAVAILABLE', 'This offer does not accept Lightning payments.');
+    const { amountSats } = await resolveOfferSats(offer.terms, rateProvider);
+    const amountMsat = amountSats * 1000;
     if (!Number.isSafeInteger(amountMsat)) throw new HttpError(422, 'AMOUNT_UNSUPPORTED', 'This offer amount exceeds Lightning millisatoshi precision.');
     const hash = value => createHash('sha256').update(value).digest('hex');
     const reservation = await store.reserveZapPurchase({
       purchase: {
         id: randomUUID(), offer_id: offer.id, offer_event_id: offer.event_id,
         creator_pubkey: offer.creator_pubkey, lightning_address: offer.terms.lightning_address,
-        amount_sats: offer.terms.amount_sats, amount_msat: amountMsat, network: paymentNetwork,
+        amount_sats: amountSats, amount_msat: amountMsat, network: paymentNetwork,
         idempotency_hash: hash(key), access_token_hash: hash(purchaseToken)
       },
       now: now()
@@ -159,29 +161,55 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
     }
     return result;
   };
-  const issueExternalPaymentLicense = async (offer, attestation) => {
-    if (!attestorSecretKey) throw new HttpError(503, 'LICENSE_ATTESTOR_NOT_CONFIGURED', 'The license attestor is not configured.');
-    const offerEvent = await store.getOfferEvent(offer.id, offer.event_id);
-    if (!offer || !offerEvent) throw new HttpError(503, 'LICENSE_EVENT_UNAVAILABLE', 'The signed offer event is unavailable for license attestation.');
-    if (offer.status !== 'published') throw new HttpError(409, 'OFFER_NOT_PUBLISHED', 'The offer must be published before a license can be issued.');
-    if (offer.license_event_id) throw new HttpError(409, 'OFFER_ALREADY_LICENSED', 'A license has already been issued for this offer.');
+  // Signs the license event for a payment settled outside Lightning (for
+  // example a card or mobile-money checkout run by an external payment
+  // service). The external service is authenticated service-to-service; the
+  // engine records its reference and never handles the funds.
+  const signExternalLicense = (offerEvent, attestation) => {
     const template = buildLicenseEvent({ kind, attestorPubkey, offerEvent, settlement: {
-      offer_event_id: offer.event_id,
+      offer_event_id: offerEvent.id,
       external_reference: attestation.externalReference,
-      evidence_type: attestation.evidenceType || 'external-payment-attestation',
-      amount_sats: Number(offer.terms.amount_sats || 0),
-      settled_at: attestation.settledAt,
-      purchase_id: attestation.purchaseReference
+      evidence_type: 'external-payment-attestation',
+      settled_at: attestation.settledAt
     } });
     const signed = finalizeEvent(template, attestorSecretKey);
     if (signed.pubkey !== attestorPubkey) throw new HttpError(500, 'ATTESTOR_KEY_MISMATCH', 'The configured attestor key cannot sign this license event.');
-    return store.queueLicense({ ...offer, status: 'licensing', license_event_id: signed.id }, signed);
+    return signed;
+  };
+  const sha256Hex = value => createHash('sha256').update(value).digest('hex');
+  const mintDownloadGrant = async ({ offer, purchaseId = null, externalReference = null }) => {
+    if (!offer.license_event_id || !offer.video_id || !['licensing', 'licensed'].includes(offer.status)) {
+      throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this offer.');
+    }
+    const rawToken = randomBytes(32).toString('hex');
+    const expiresAt = now() + 3600;
+    await store.issueDownloadGrant({
+      id: randomUUID(), offerId: offer.id, purchaseId,
+      licenseEventId: offer.license_event_id, videoId: offer.video_id,
+      tokenHash: sha256Hex(rawToken), expiresAt, maxUses: 5, externalReference
+    });
+    return { status: 201, body: { grantToken: rawToken, expiresAt } };
   };
   return {
+    /** Public BTC price for a fiat currency, used to show a sats estimate. */
+    async getRate(currency) {
+      if (!rateProvider) throw new HttpError(503, 'RATE_UNAVAILABLE', 'Exchange rates are not configured.');
+      return { status: 200, body: await rateProvider.getRate(currency) };
+    },
     async create({ pubkey, body, key, digest }) {
+      // An empty Lightning Address field means "no Lightning payments".
+      if (body && typeof body === 'object' && body.lightning_address === '') {
+        const { lightning_address: _empty, ...withoutAddress } = body;
+        body = withoutAddress;
+      }
       input('OfferDraft', body);
       const { video_id: videoId, ...rest } = body;
-      const { address: lightningAddress } = parseLightningAddress(rest.lightning_address);
+      // The Lightning Address is optional. When present it is normalised and
+      // signed into the offer; when absent the offer is simply not payable over
+      // Lightning and another configured checkout must be used.
+      const destination = rest.lightning_address
+        ? { lightning_address: parseLightningAddress(rest.lightning_address).address } : {};
+      if (!rest.lightning_address) delete rest.lightning_address;
       let terms;
       if (videoId) {
         // The content layer resolves the canonical reference. The browser never
@@ -190,9 +218,9 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         const video = await store.getOwnedVideo(videoId, pubkey);
         if (!video) throw new HttpError(404, 'NOT_FOUND', 'Video not found.');
         if (video.status !== 'ready') throw new HttpError(409, 'VIDEO_NOT_READY', 'This video is still processing and cannot be offered yet.');
-        terms = { ...rest, lightning_address: lightningAddress, content_url: previewUrl(mediaRef(video)), content_sha256: video.reference_sha256 };
+        terms = { ...rest, ...destination, content_url: previewUrl(mediaRef(video)), content_sha256: video.reference_sha256 };
       } else {
-        terms = { ...body, lightning_address: lightningAddress };
+        terms = { ...rest, ...destination };
         try {
           const url = new URL(terms.content_url);
           if (url.protocol !== 'https:' || url.username || url.password) throw new Error();
@@ -213,10 +241,10 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
     async discover() {
       const rows = await store.listDiscoverableOffers(DISCOVERY_LIMIT);
       const watermarkFor = (video) => {
-        if (!video || !video.width || !video.height) return cloudinary.watermarkLandscape;
+        if (!video || !video.width || !video.height) return cloudinary?.watermarkLandscape ?? null;
         return video.height > video.width
-          ? cloudinary.watermarkPortrait
-          : cloudinary.watermarkLandscape;
+          ? cloudinary?.watermarkPortrait ?? null
+          : cloudinary?.watermarkLandscape ?? null;
       };
       return { status: 200, body: { offers: rows.map(({ offer, video }) => {
         const media = video ? mediaRef(video) : null;
@@ -228,7 +256,8 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
           preview_url: media ? previewUrl(media, undefined, watermark) : offer.terms.content_url,
           thumbnail_url: media ? thumbnailUrl(media, undefined, watermark) : null,
           duration_seconds: video?.duration_seconds ?? null,
-          license_duration: offer.terms.duration, price_sats: offer.terms.amount_sats,
+          license_duration: offer.terms.duration, price_sats: offer.terms.amount_sats ?? null,
+          price: offer.terms.price ?? null,
           status: offer.status, created_at: offer.created_at
         };
       }) } };
@@ -248,6 +277,11 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
           const watermark = (video.height > video.width) ? cloudinary.watermarkPortrait : cloudinary.watermarkLandscape;
           enriched = { ...stored, preview_url: previewUrl(media, undefined, watermark), thumbnail_url: thumbnailUrl(media, undefined, watermark) };
         }
+      }
+      if (enriched.creator_pubkey !== pubkey && enriched.external_payment) {
+        // The external payment reference is the payment service's record key.
+        const { external_payment: externalPayment, ...rest } = enriched;
+        enriched = { ...rest, external_payment: { settled_at: externalPayment.settled_at } };
       }
       if (enriched.creator_pubkey !== pubkey && enriched.payment) {
         const { payment, ...publicOffer } = enriched;
@@ -293,23 +327,24 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
       if (offer.payment?.status === 'settled' || (offer.payment?.status === 'pending' && !invoiceHasExpired(offer.payment))) {
         return { status: 200, body: { offerId: offer.id, amountSats: offer.payment.amount_sats, paymentRequest: offer.payment.request } };
       }
+      const { amountSats } = await resolveOfferSats(offer.terms, rateProvider);
       const invoice = await paymentProvider.createInvoice({
-        amountSats: offer.terms.amount_sats,
+        amountSats,
         description: `ContentPort license: ${offer.terms.title || offer.id}`,
         expiry: 3600,
         reference: `contentport_${offer.id}`
       });
       if (!invoice?.id || !String(invoice.payment_hash || '') || !/^ln/i.test(String(invoice.request || '')) ||
-          Number(invoice.amount_sat) !== offer.terms.amount_sats || invoice.status !== 'pending') {
+          Number(invoice.amount_sat) !== amountSats || invoice.status !== 'pending') {
         throw new HttpError(502, 'PAYMENT_PROVIDER_ERROR', 'Polar LND returned an invalid Lightning invoice.');
       }
       const next = { ...offer, payment: {
         provider: paymentProvider.name || 'polar-lnd', invoice_id: invoice.id, payment_hash: String(invoice.payment_hash),
-        request: invoice.request, amount_sats: offer.terms.amount_sats, status: 'pending',
+        request: invoice.request, amount_sats: amountSats, status: 'pending',
         reference: `contentport_${offer.id}`, expires_at: invoice.expires_at
       } };
       await store.saveOfferDocument(next);
-      return { status: 201, body: { offerId: offer.id, amountSats: offer.terms.amount_sats, paymentRequest: invoice.request } };
+      return { status: 201, body: { offerId: offer.id, amountSats, paymentRequest: invoice.request } };
     },
     async getStatus(id) {
       if (zapPaymentProvider) throw new HttpError(404, 'NOT_FOUND', 'Use the purchase-specific status endpoint.');
@@ -395,69 +430,36 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         ...(downloadGrantToken ? { downloadGrantToken, downloadGrantExpiresAt } : {})
       } };
     },
+    /**
+     * Issues a short-lived download grant to the buyer who paid. The route id
+     * is either an offer id (external checkout, proven by X-External-Credential)
+     * or a Lightning purchase id (proven by the buyer's X-Purchase-Token).
+     * Purchase ids are public (they appear in the signed license event), so a
+     * purchase id alone never authorises a download: the secret is required.
+     */
     async issueDownloadGrant(id, purchaseToken, externalCredential) {
-      if (!paymentEnabled) throw new HttpError(503, 'PAYMENTS_DISABLED', 'Lightning payments are not enabled in this environment.');
-      let offer = await store.getOffer(id);
-      let purchaseId = null;
-      let externalReference = null;
-      // When called from /api/purchases/:purchaseId/download-grant, the id is
-      // a purchase UUID, not an offer UUID. Look up the purchase first, then
-      // resolve the offer from it.
-      if (!offer) {
-        const purchase = await store.getZapPurchase(id);
-        console.log('[issueDownloadGrant] getZapPurchase result:', purchase ? { id: purchase.id, offer_id: purchase.offer_id, status: purchase.status } : 'NULL');
-        if (!purchase || purchase.status !== 'verified') {
-          throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
-        }
-        offer = await store.getOffer(purchase.offer_id);
-        console.log('[issueDownloadGrant] getOffer result:', offer ? { id: offer.id, status: offer.status, license_event_id: !!offer.license_event_id, video_id: !!offer.video_id } : 'NULL');
-        if (!offer || offer.status !== 'licensed' || !offer.license_event_id || !offer.video_id) {
-          throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this offer.');
-        }
-        purchaseId = purchase.id;
-      }
-      if (purchaseId !== null) {
-        // Already resolved from the route's id parameter. Skip to grant issuance.
-      } else if (externalCredential && /^[0-9a-f]{64}$/.test(externalCredential)) {
-        // External purchase-associated credential: validate against the
-        // association registered by the Payment Microservice for this offer.
-        const tokenHash = createHash('sha256').update(externalCredential).digest('hex');
-        const association = await store.getExternalPurchaseAssociationByToken(tokenHash);
+      if (typeof externalCredential === 'string' && externalCredential.length) {
+        if (!/^[0-9a-f]{64}$/.test(externalCredential)) throw new HttpError(403, 'FORBIDDEN', 'The download credential is not valid for this offer.');
+        const association = await store.getExternalPurchaseAssociationByToken(sha256Hex(externalCredential));
         if (!association || association.offer_id !== id) {
           throw new HttpError(403, 'FORBIDDEN', 'The download credential is not valid for this offer.');
         }
-        await store.consumeExternalPurchaseAssociation(tokenHash, now());
-        externalReference = association.external_reference;
-      } else if (typeof purchaseToken === 'string' && /^[0-9a-f]{64}$/.test(purchaseToken)) {
-        if (!zapPaymentProvider) throw new HttpError(404, 'NOT_FOUND', 'Download grants are unavailable.');
-        const tokenHash = createHash('sha256').update(purchaseToken).digest('hex');
-        const purchase = await store.getZapPurchaseForBuyer(id, tokenHash);
-        if (!purchase || purchase.status !== 'verified') throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
-        purchaseId = purchase.id;
-        const offerCheck = await store.getOffer(purchase.offer_id);
-        if (!offerCheck || offerCheck.status !== 'licensed' || !offerCheck.license_event_id || !offerCheck.video_id) {
+        const offer = await store.getOffer(id);
+        if (!offer || offer.external_payment?.reference !== association.external_reference) {
           throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this purchase.');
         }
-      } else if (typeof purchaseToken === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(purchaseToken)) {
-        // Manual purchase UUID entry: the brand types the purchase ID they
-        // received after payment. Validate it belongs to this offer.
-        const purchase = await store.getZapPurchase(purchaseToken);
-        if (!purchase || purchase.offer_id !== id || purchase.status !== 'verified') {
-          throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
-        }
-        purchaseId = purchase.id;
-      } else {
+        return mintDownloadGrant({ offer, externalReference: association.external_reference });
+      }
+      if (!paymentEnabled) throw new HttpError(503, 'PAYMENTS_DISABLED', 'Lightning payments are not enabled in this environment.');
+      if (!zapPaymentProvider) throw new HttpError(404, 'NOT_FOUND', 'Download grants are unavailable.');
+      if (typeof purchaseToken !== 'string' || !/^[0-9a-f]{64}$/.test(purchaseToken)) {
         throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
       }
-      const rawToken = randomBytes(32).toString('hex');
-      const grantTokenHash = createHash('sha256').update(rawToken).digest('hex');
-      const expiresAt = now() + 3600;
-      await store.issueDownloadGrant({
-        id: randomUUID(), offerId: offer.id, purchaseId,
-        licenseEventId: offer.license_event_id, videoId: offer.video_id,
-        tokenHash: grantTokenHash, expiresAt, maxUses: 5, externalReference
-      });
-      return { status: 201, body: { grantToken: rawToken, expiresAt } };
+      const purchase = await store.getZapPurchaseForBuyer(id, sha256Hex(purchaseToken));
+      if (!purchase || purchase.status !== 'verified') throw new HttpError(404, 'NOT_FOUND', 'Purchase not found.');
+      const offer = await store.getOffer(purchase.offer_id);
+      if (!offer) throw new HttpError(409, 'LICENSE_NOT_ISSUED', 'A license has not been issued for this purchase.');
+      return mintDownloadGrant({ offer, purchaseId: purchase.id });
     },
 async consumeDownloadGrant(input) {
       const grantToken = typeof input === 'string' ? input : input?.grantToken;
@@ -481,30 +483,37 @@ async consumeDownloadGrant(input) {
       await store.saveLightningWebhook(entry);
       return { status: 200, body: { received: true, provider: entry.provider, eventType: entry.eventType, offerId: entry.offerId || null } };
     },
-    async externalPaymentAttestation({ id, body, key }) {
+    /**
+     * Service-to-service: an external payment service reports a settled
+     * payment for an offer. The engine signs the license and registers the
+     * buyer's download credential atomically. Safe to retry with the same
+     * externalReference; a second, different payment for a licensed offer is
+     * rejected with 409 so the caller can refund it.
+     */
+    async externalPaymentAttestation({ id, body }) {
       if (!body || typeof body !== 'object') throw new HttpError(400, 'VALIDATION_ERROR', 'Attestation body must be JSON.');
-      const { offerId, offerEventId, externalReference, currency, amountMinor, settledAt, evidenceType, credentialToken } = body;
-      if (!offerId || !externalReference || !Number.isInteger(settledAt)) {
-        throw new HttpError(400, 'VALIDATION_ERROR', 'Attestation requires offerId, externalReference, and settledAt.');
+      const { offerId, offerEventId, externalReference, settledAt, credentialToken } = body;
+      if (offerId !== id || typeof externalReference !== 'string' || !/^[A-Za-z0-9_.:-]{8,200}$/.test(externalReference)
+        || !Number.isInteger(settledAt) || settledAt <= 0
+        || typeof credentialToken !== 'string' || !/^[0-9a-f]{64}$/.test(credentialToken)) {
+        throw new HttpError(400, 'VALIDATION_ERROR', 'Attestation requires offerId matching the route, externalReference, settledAt and a 64-hex credentialToken.');
       }
+      if (!attestorSecretKey) throw new HttpError(503, 'LICENSE_ATTESTOR_NOT_CONFIGURED', 'The license attestor is not configured.');
       const offer = await store.getOffer(offerId);
       if (!offer) throw new HttpError(404, 'NOT_FOUND', 'Offer not found.');
-      // Idempotent: if already licensed, return existing license event.
-      if (offer.license_event_id) {
-        const event = await store.getOfferEvent(offerId, offer.license_event_id);
-        return { status: 200, body: { offered: false, alreadyLicensed: true, licenseEventId: offer.license_event_id, event } };
+      if (offerEventId && offer.event_id !== offerEventId) throw new HttpError(409, 'OFFER_CHANGED', 'The signed offer has changed.');
+      const offerEvent = offer.event_id ? await store.getOfferEvent(offerId, offer.event_id) : null;
+      if (!offerEvent && !offer.license_event_id) {
+        throw new HttpError(409, 'OFFER_NOT_PURCHASABLE', 'This offer is not available for licensing.');
       }
-      const result = await issueExternalPaymentLicense(offer, {
-        externalReference, evidenceType, settledAt, purchaseReference: body.purchaseReference
+      const result = await store.recordExternalLicense({
+        offerId, eventId: offer.event_id, externalReference, settledAt,
+        credentialTokenHash: sha256Hex(credentialToken),
+        buildEvent: () => signExternalLicense(offerEvent, { externalReference, settledAt })
       });
-      // Register the purchase-associated download credential if provided.
-      if (credentialToken && /^[0-9a-f]{64}$/.test(credentialToken)) {
-        const tokenHash = createHash('sha256').update(credentialToken).digest('hex');
-        await store.registerExternalPurchaseAssociation({
-          id: randomUUID(), offerId, externalReference, credentialTokenHash: tokenHash
-        });
-      }
-      return { status: 200, body: { offered: true, licenseEventId: result.license_event_id } };
+      return { status: result.created ? 201 : 200, body: {
+        offerId, licenseEventId: result.offer.license_event_id, alreadyLicensed: !result.created
+      } };
     }
   };
 }

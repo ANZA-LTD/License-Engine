@@ -10,8 +10,11 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ContentPreview } from "@/components/offer/ContentPreview";
 import { VerificationCard } from "@/components/offer/VerificationCard";
 import { LicenseDetails } from "@/components/offer/LicenseDetails";
-import { getMyOffer, getOffer, issueDownloadGrant, consumeDownloadGrant, getStoredPurchaseId, getStoredDownloadGrant } from "@/lib/api";
+import { getMyOffer, getOffer, issueDownloadGrant, issueExternalDownloadGrant, consumeDownloadGrant, getStoredPurchaseId, getStoredDownloadGrant } from "@/lib/api";
 import { Offer } from "@/lib/types";
+import { PurchaseOptions } from "@/components/payment/PurchaseOptions";
+import { getStoredExternalCredential } from "@/lib/checkout";
+import { formatPrice } from "@/lib/price";
 
 /**
  * Screen 3 (Public Offer Page) AND Screen 5 (Licensed Confirmation) share
@@ -126,17 +129,8 @@ function PublicOfferView({ offer }: { offer: Offer }) {
               brand can license it.
             </div>
           )}
-          {offer.status === "OPEN" && offer.nostrEventId !== PENDING_EVENT && (
-            <Link href={`/offers/${offer.offerId}/pay`} className="mt-6 block">
-              <Button fullWidth>Purchase License</Button>
-            </Link>
-          )}
-          {offer.status === "PAYMENT_PENDING" && (
-            <Link href={`/offers/${offer.offerId}/pay`} className="mt-6 block">
-              <Button fullWidth variant="secondary">
-                Resume payment
-              </Button>
-            </Link>
+          {(offer.status === "OPEN" || offer.status === "PAYMENT_PENDING") && offer.nostrEventId !== PENDING_EVENT && (
+            <PurchaseOptions offer={offer} resume={offer.status === "PAYMENT_PENDING"} />
           )}
         </Card>
 
@@ -172,8 +166,8 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
         </h1>
         <p className="mt-2 text-sm text-text-secondary">
           {zapReceiptVerified
-            ? `The creator's Lightning service signed a receipt for ${offer.priceSats.toLocaleString()} sats. This is the service's attestation, not independent proof that funds moved.`
-            : `${offer.priceSats.toLocaleString()} sats settled to the local Lightning node.`}
+            ? `The creator's Lightning service signed a receipt for ${formatPrice(offer.price, offer.priceSats)}. This is the service's attestation, not independent proof that funds moved.`
+            : `${formatPrice(offer.price, offer.priceSats)} settled to the local Lightning node.`}
         </p>
 
         <Card className="mt-8 text-left">
@@ -194,7 +188,7 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
               <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
                 {zapReceiptVerified ? "Offer amount" : "Amount settled"}
               </p>
-              <p className="mt-1 text-lg font-bold text-text-primary">{offer.priceSats.toLocaleString()} sats</p>
+              <p className="mt-1 text-lg font-bold text-text-primary">{formatPrice(offer.price, offer.priceSats)}</p>
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
@@ -229,6 +223,16 @@ function LicensedView({ offer }: { offer: Offer }) {
   const [manualPurchaseId, setManualPurchaseId] = useState<string>("");
   const [showManualInput, setShowManualInput] = useState(false);
   const autoAttempted = useRef(false);
+  // The buyer proves the purchase with a secret held by this browser: a fresh
+  // grant, an external-checkout credential, or the Lightning purchase token.
+  const [hasDownloadAccess, setHasDownloadAccess] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search.slice(1));
+    setHasDownloadAccess(Boolean(
+      /^[0-9a-f]{64}$/.test(params.get("grantToken") ?? "") || getStoredDownloadGrant(offer.offerId)
+      || getStoredExternalCredential(offer.offerId) || offer.purchaseId || getStoredPurchaseId(offer.offerId)
+    ));
+  }, [offer.offerId, offer.purchaseId]);
   const licensedDate = offer.licensedAt
     ? new Date(offer.licensedAt).toLocaleDateString("en-US", {
         day: "numeric",
@@ -271,6 +275,14 @@ function LicensedView({ offer }: { offer: Offer }) {
       const existingToken = await resolveGrantToken();
       if (existingToken) {
         await triggerFileDownload(existingToken);
+        setDownloadStatus("success");
+        return;
+      }
+      // A buyer who paid through an external checkout holds a reusable credential.
+      const externalCredential = getStoredExternalCredential(offer.offerId);
+      if (externalCredential) {
+        const grant = await issueExternalDownloadGrant(offer.offerId, externalCredential);
+        await triggerFileDownload(grant.grantToken);
         setDownloadStatus("success");
         return;
       }
@@ -343,7 +355,7 @@ function LicensedView({ offer }: { offer: Offer }) {
           </div>
 
           <div className="mt-6 border-t border-border pt-6">
-            <Button fullWidth onClick={() => initiateDownload(false)} disabled={downloadStatus === "downloading" || (!manualPurchaseId && !(offer.purchaseId || getStoredPurchaseId(offer.offerId)))}>
+            <Button fullWidth onClick={() => initiateDownload(false)} disabled={downloadStatus === "downloading" || !hasDownloadAccess}>
               <Download size={16} className="mr-2" />
               {downloadStatus === "downloading" ? "Preparing download…"
                 : downloadStatus === "success" ? "Download complete"
@@ -359,31 +371,11 @@ function LicensedView({ offer }: { offer: Offer }) {
                 Your download should start automatically. Use the button above to retry if it does not.
               </p>
             )}
-            {!(offer.purchaseId || getStoredPurchaseId(offer.offerId)) && downloadStatus !== "downloading" && (
-              <div className="mt-4">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                  If you purchased this offer, enter your purchase ID to download:
-                </p>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={manualPurchaseId}
-                    onChange={(e) => setManualPurchaseId(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && manualPurchaseId) initiateDownload(false, manualPurchaseId); }}
-                    placeholder="e.g. f2974692-1b4a-4f7b-a3c9-43eb8c94ad00"
-                    className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                  />
-                  <Button
-                    onClick={() => initiateDownload(false, manualPurchaseId)}
-                    disabled={!manualPurchaseId}
-                  >
-                    Download
-                  </Button>
-                </div>
-                <p className="mt-1 text-xs text-text-secondary">
-                  Your purchase ID was sent to you after payment. It looks like a UUID, e.g. f2974692-1b4a-4f7b-a3c9-43eb8c94ad00.
-                </p>
-              </div>
+            {!hasDownloadAccess && downloadStatus !== "downloading" && (
+              <p className="mt-4 text-xs text-text-secondary">
+                The original file is available to the buyer. Open this page in the
+                browser you paid from to download it.
+              </p>
             )}
           </div>
 

@@ -19,6 +19,7 @@ import { Navbar } from "@/components/layout/Navbar";
 import { UploadVideo } from "@/components/content/UploadVideo";
 import { formatDuration, listMyVideos, publishOffer } from "@/lib/api";
 import { OfferSummary, OwnedVideo, VideoRecord } from "@/lib/types";
+import { formatPrice } from "@/lib/price";
 import { probeSigner, SignerProbe } from "@/lib/nostr";
 
 type LibraryState = "loading" | "unauthenticated" | "ready" | "error";
@@ -314,7 +315,7 @@ function VideoCard({
           </span>
           {state.kind !== "none" && (
             <span className="text-xs font-medium text-slate-500">
-              {state.offer.price_sats.toLocaleString()} sats
+              {formatPrice(state.offer.price, state.offer.price_sats)}
             </span>
           )}
         </div>

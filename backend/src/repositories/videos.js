@@ -40,9 +40,11 @@ export class PostgresContentStore extends PostgresOfferStore {
   async offerSummaries(where, params) {
     return (await this.pool.query(
       `SELECT video_id, document->>'id' AS id, document->>'status' AS status,
-              document->'terms'->>'amount_sats' AS amount_sats, document->>'created_at' AS created_at
+              document->'terms'->>'amount_sats' AS amount_sats, document->'terms'->'price' AS price,
+              document->>'created_at' AS created_at
        FROM offers ${where} ORDER BY created_at DESC`, params
-    )).rows.map(row => ({ ...row, amount_sats: Number(row.amount_sats), created_at: Number(row.created_at) }));
+    )).rows.map(row => ({ ...row, amount_sats: row.amount_sats === null ? null : Number(row.amount_sats),
+      price: row.price ?? null, created_at: Number(row.created_at) }));
   }
   // Discovery. Only offers the licensing engine has already published are
   // discoverable, and an offer already licensed is no longer purchasable so it

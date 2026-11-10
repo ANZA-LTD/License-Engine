@@ -19,6 +19,12 @@ export function matchPurchaseRoute(method, pathname) {
   return null;
 }
 
+export function matchRateRoute(method, pathname) {
+  const match = /^\/api\/rates\/([A-Za-z]{3})$/.exec(pathname);
+  if (method === 'GET' && match) return { action: 'getRate', id: match[1].toUpperCase(), auth: false };
+  return null;
+}
+
 export function matchDownloadRoute(method, pathname) {
   const match = /^\/api\/downloads\/([0-9a-f]{64})$/.exec(pathname);
   if (method === 'GET' && match) return { action: 'consumeDownloadGrant', token: match[1], auth: false };

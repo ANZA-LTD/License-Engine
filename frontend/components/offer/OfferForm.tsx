@@ -10,6 +10,8 @@ import { createOffer, getMyVideo } from "@/lib/api";
 import { LicenseType, CreateOfferPayload, OfferSummary } from "@/lib/types";
 import { probeSigner, SignerProbe } from "@/lib/nostr";
 import { canCreateOfferFromUploadedVideo } from "@/lib/offerAccess";
+import { fiatMinorToSats, useBtcRate } from "@/lib/price";
+import { loadCheckoutProvider } from "@/lib/checkout";
 import {
   LICENSE_TYPE_DESCRIPTIONS,
   LICENSE_TYPE_LABELS,
@@ -23,7 +25,7 @@ const EMPTY_FORM: FormState = {
   description: "",
   contentUrl: "",
   brandName: "",
-  priceSats: 0,
+  priceKes: 0,
   creatorLightningAddress: "",
   licenseType: "30_DAY_SOCIAL",
   licenseDescription: LICENSE_TYPE_DESCRIPTIONS["30_DAY_SOCIAL"],
@@ -54,6 +56,13 @@ export function OfferForm() {
   // (live or draft), re-creation is blocked so the creator can't publish a
   // duplicate for content that is already offered.
   const [existingOffer, setExistingOffer] = useState<OfferSummary | null>(null);
+  // A creator enrolled with the configured checkout provider (for example an
+  // Anza creator paid out to M-Pesa) does not need a Lightning Address. Until
+  // that is known, the address stays required.
+  const [enrolled, setEnrolled] = useState(false);
+  const rate = useBtcRate("KES");
+  const satsEstimate =
+    rate && form.priceKes > 0 ? fiatMinorToSats(Math.round(form.priceKes) * 100, rate.btc_price_minor) : null;
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -72,8 +81,18 @@ export function OfferForm() {
 
   useEffect(() => {
     let cancelled = false;
-    probeSigner().then((result) => {
-      if (!cancelled) setSigner(result);
+    probeSigner().then(async (result) => {
+      if (cancelled) return;
+      setSigner(result);
+      if (result.status !== "connected") return;
+      const provider = await loadCheckoutProvider();
+      if (!provider?.isCreatorEnrolled || cancelled) return;
+      try {
+        const isEnrolled = await provider.isCreatorEnrolled(result.pubkey);
+        if (!cancelled) setEnrolled(isEnrolled);
+      } catch {
+        /* Unknown enrolment keeps the Lightning Address required. */
+      }
     });
     return () => {
       cancelled = true;
@@ -156,15 +175,16 @@ export function OfferForm() {
     if (Boolean(videoId) && !linkedVideo)
       next.contentUrl = videoError ?? "Waiting for your video to load.";
     if (!form.brandName.trim()) next.brandName = "Brand is required.";
-    if (
-      !/^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(
-        form.creatorLightningAddress.trim(),
-      )
-    )
+    const address = form.creatorLightningAddress.trim();
+    const validAddress = /^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(address);
+    if (!enrolled && !validAddress)
       next.creatorLightningAddress =
-        "Enter a public Lightning Address (name@domain).";
-    if (!form.priceSats || form.priceSats <= 0)
-      next.priceSats = "Price must be greater than 0.";
+        "Enter a public Lightning Address (name@domain) so brands can pay you.";
+    if (enrolled && address && !validAddress)
+      next.creatorLightningAddress =
+        "Check the format (name@domain), or leave this empty.";
+    if (!Number.isInteger(form.priceKes) || form.priceKes <= 0)
+      next.priceKes = "Enter a price in whole Kenyan shillings.";
     if (!form.licenseDescription.trim())
       next.licenseDescription = "License description is required.";
 
@@ -273,14 +293,26 @@ export function OfferForm() {
             }
           />
           <PreviewRow label="Brand" value={form.brandName} />
-          <PreviewRow
-            label="Creator Lightning Address"
-            value={form.creatorLightningAddress}
-          />
+          {form.creatorLightningAddress.trim() && (
+            <PreviewRow
+              label="Creator Lightning Address"
+              value={form.creatorLightningAddress}
+            />
+          )}
           <PreviewRow
             label="Price"
-            value={`${form.priceSats.toLocaleString()} sats`}
+            value={`KES ${form.priceKes.toLocaleString()}`}
           />
+          {enrolled && (
+            <PreviewRow
+              label="How you get paid"
+              value={
+                form.creatorLightningAddress.trim()
+                  ? "M-Pesa through Anza, or Bitcoin to your Lightning Address if the brand pays that way"
+                  : "M-Pesa through Anza"
+              }
+            />
+          )}
           <PreviewRow
             label="License type"
             value={LICENSE_TYPE_LABELS[form.licenseType]}
@@ -380,24 +412,26 @@ export function OfferForm() {
           error={errors.brandName}
         />
 
-        <Input
-          label="Creator Lightning Address"
-          placeholder="creator@example.com"
-          hint="This destination is included in your signed offer. Changing it later requires publishing a new offer."
-          value={form.creatorLightningAddress}
-          onChange={(e) => update("creatorLightningAddress", e.target.value)}
-          error={errors.creatorLightningAddress}
-        />
-
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
           <Input
-            label="Price (sats)"
+            label="Price (KES)"
             type="number"
             min={1}
-            placeholder="5000"
-            value={form.priceSats || ""}
-            onChange={(e) => update("priceSats", Number(e.target.value))}
-            error={errors.priceSats}
+            step={1}
+            inputMode="numeric"
+            placeholder="4000"
+            value={form.priceKes || ""}
+            onChange={(e) => update("priceKes", Number(e.target.value))}
+            error={errors.priceKes}
+            hint={
+              // Enrolled creators are paid in shillings, so sats are only
+              // mentioned when they also accept Bitcoin.
+              enrolled && !form.creatorLightningAddress.trim()
+                ? "What the brand pays. You receive 90% to your M-Pesa number."
+                : satsEstimate
+                  ? `≈ ${satsEstimate.toLocaleString()} sats at today's rate. Bitcoin buyers pay the live equivalent.`
+                  : "Bitcoin buyers pay the live sats equivalent."
+            }
           />
 
           <Select
@@ -414,6 +448,20 @@ export function OfferForm() {
             ))}
           </Select>
         </div>
+
+        <Input
+          label={enrolled ? "Lightning Address (optional)" : "Creator Lightning Address"}
+          placeholder="creator@example.com"
+          hint={
+            enrolled
+              ? "Only add this if you also want to accept Bitcoin. Your Anza payouts go to your M-Pesa number automatically."
+              : "Where Bitcoin payments are sent. It is included in your signed offer, so changing it later means publishing a new offer."
+          }
+          value={form.creatorLightningAddress}
+          onChange={(e) => update("creatorLightningAddress", e.target.value)}
+          error={errors.creatorLightningAddress}
+        />
+
 
         <Textarea
           label="License Description"

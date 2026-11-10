@@ -103,6 +103,16 @@ function readS2sSecret(env, appEnv) {
   return secret;
 }
 
+// CoinGecko-compatible BTC price endpoint for fiat-priced offers paid over Lightning.
+function readRateUrl(env) {
+  const value = env.BTC_RATE_URL?.trim() || 'https://api.coingecko.com/api/v3/simple/price';
+  const url = new URL(value);
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+    throw new Error('BTC_RATE_URL must be an HTTPS URL without credentials or query');
+  }
+  return url.href;
+}
+
 export function readConfig(env = process.env) {
   const port = Number(env.PORT || 3000);
   const kind = Number(env.NOSTR_OFFER_KIND);
@@ -150,5 +160,5 @@ export function readConfig(env = process.env) {
     appEnv, paymentNetwork, paymentEnabled, paymentImplementation: appEnv === 'development' ? 'polar-lnd' : 'lnurl-zap',
     kind, attestorPubkey, attestorSecretKey, relays,
     ...(appEnv === 'development' ? { lndRestUrl: readLndUrl(env.LND_REST_URL), lndMacaroon: env.LND_MACAROON?.trim() || null } : {}),
-    cloudinary: readCloudinary(env), docsAuth, s2sSecret };
+    cloudinary: readCloudinary(env), docsAuth, s2sSecret, btcRateUrl: readRateUrl(env) };
 }

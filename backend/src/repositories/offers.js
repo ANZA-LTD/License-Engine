@@ -58,7 +58,10 @@ export class PostgresOfferStore {
         throw new HttpError(404, 'NOT_FOUND', 'Published offer not found.');
       }
       if (offer.status !== 'published') throw new HttpError(409, 'OFFER_NOT_PURCHASABLE', 'This offer is not available for purchase.');
-      if (offer.terms.lightning_address !== purchase.lightning_address || offer.terms.amount_sats !== purchase.amount_sats) {
+      // A sats-priced offer is charged its signed amount. A fiat-priced offer is
+      // quoted at the live rate when the purchase is reserved.
+      if (offer.terms.lightning_address !== purchase.lightning_address
+        || (offer.terms.amount_sats !== undefined && offer.terms.amount_sats !== purchase.amount_sats)) {
         throw new HttpError(409, 'OFFER_CHANGED', 'The signed offer payment destination or amount has changed.');
       }
       const previous = (await client.query('SELECT * FROM zap_purchases WHERE offer_id = $1 AND idempotency_hash = $2 FOR UPDATE',
@@ -141,10 +144,10 @@ export class PostgresOfferStore {
     return { grantToken: rawToken, expiresAt };
   }
   async issueDownloadGrant({ id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses, externalReference = null }) {
-    await this.pool.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses)
-      VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8)
+    await this.pool.query(`INSERT INTO download_grants(id, offer_id, purchase_id, license_event_id, video_id, token_hash, expires_at, max_uses, external_reference)
+      VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision),$8,$9)
       ON CONFLICT DO NOTHING`,
-      [id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses]);
+      [id, offerId, purchaseId, licenseEventId, videoId, tokenHash, expiresAt, maxUses, externalReference]);
   }
 
   async getDownloadGrantForPurchase(purchaseId) {
@@ -156,6 +159,48 @@ export class PostgresOfferStore {
       VALUES ($1,$2,$3,$4)`,
       [id, offerId, externalReference, credentialTokenHash]);
     return { id };
+  }
+  /**
+   * Issues the license for an externally paid purchase and registers the
+   * buyer's download credential in one transaction, so a license can never
+   * exist without its credential (or the reverse). Idempotent per external
+   * reference: a retry with the same reference returns the existing license.
+   * A different reference for an already-licensed offer is a conflict, because
+   * each offer is licensed exactly once.
+   */
+  async recordExternalLicense({ offerId, eventId, buildEvent, externalReference, settledAt, credentialTokenHash }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`license:${offerId}`]);
+      const current = (await client.query('SELECT document FROM offers WHERE id = $1 FOR UPDATE', [offerId])).rows[0]?.document;
+      if (!current) throw new HttpError(404, 'NOT_FOUND', 'Offer not found.');
+      const register = () => client.query(`INSERT INTO external_purchase_associations(id, offer_id, external_reference, credential_token_hash)
+        VALUES ($1,$2,$3,$4) ON CONFLICT (credential_token_hash) DO NOTHING`,
+        [randomUUID(), offerId, externalReference, credentialTokenHash]);
+      if (current.license_event_id) {
+        if (current.external_payment?.reference !== externalReference) {
+          throw new HttpError(409, 'OFFER_ALREADY_LICENSED', 'A license has already been issued for this offer.');
+        }
+        if (credentialTokenHash) await register();
+        await client.query('COMMIT');
+        return { offer: current, created: false };
+      }
+      if (current.status !== 'published' || current.event_id !== eventId) {
+        throw new HttpError(409, 'OFFER_NOT_PURCHASABLE', 'This offer is not available for licensing.');
+      }
+      const event = buildEvent(current);
+      const next = { ...current, status: 'licensing', license_event_id: event.id, licensed_at: settledAt,
+        external_payment: { reference: externalReference, settled_at: settledAt } };
+      await client.query('INSERT INTO nostr_outbox(event_id, offer_id, event) VALUES ($1, $2, $3)', [event.id, offerId, event]);
+      await client.query('UPDATE offers SET document = $2 WHERE id = $1', [offerId, next]);
+      if (credentialTokenHash) await register();
+      await client.query('COMMIT');
+      return { offer: next, created: true };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
   }
   async getExternalPurchaseAssociationByToken(tokenHash) {
     return (await this.pool.query('SELECT * FROM external_purchase_associations WHERE credential_token_hash = $1 AND consumed_at IS NULL', [tokenHash])).rows[0] || null;

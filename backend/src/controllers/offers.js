@@ -1,6 +1,7 @@
 export function createOfferController(service) {
   return {
     create: context => service.create(context),
+    getRate: context => service.getRate(context.id),
     get: context => service.get(context.id, context.pubkey),
     discover: context => service.discover(),
     publish: context => service.publish(context),

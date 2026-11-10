@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import { DiscoveryListing } from "@/lib/types";
 import { LICENSE_TYPE_LABELS } from "@/lib/licenseTypes";
+import { formatPrice } from "@/lib/price";
 
 type Filter = "all" | "short" | "long";
 const FILTERS: { id: Filter; label: string }[] = [
@@ -249,7 +250,7 @@ function OfferCard({ offer }: { offer: DiscoveryListing }) {
             </p>
           </div>
           <p className="text-base font-bold text-slate-900">
-            {offer.price_sats.toLocaleString()} sats
+            {formatPrice(offer.price, offer.price_sats)}
           </p>
         </div>
 
