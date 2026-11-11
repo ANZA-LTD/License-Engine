@@ -243,7 +243,7 @@ function toDate(value: string | number | undefined): Date | null {
 
 /** Screen 5 — spec section 18/19 */
 function LicensedView({ offer }: { offer: Offer }) {
-  type Phase = "idle" | "preparing" | "ready" | "error";
+  type Phase = "idle" | "preparing" | "ready" | "done" | "error";
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<{ url: string; file: File | null } | null>(null);
@@ -251,6 +251,7 @@ function LicensedView({ offer }: { offer: Offer }) {
   const [initialGrant, setInitialGrant] = useState<string | null>(null);
   const [hasLightningAccess, setHasLightningAccess] = useState(false);
   const [codeInput, setCodeInput] = useState("");
+  const [doneMessage, setDoneMessage] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const autoAttempted = useRef(false);
 
@@ -330,7 +331,9 @@ function LicensedView({ offer }: { offer: Offer }) {
       link.click();
       document.body.removeChild(link);
       setPrepared({ url, file: null });
-      setPhase("ready");
+      // The browser handles the download itself, so this confirms it started.
+      setDoneMessage("Your download has started. Find the video in your Downloads folder or your browser's downloads list.");
+      setPhase("done");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The download could not be prepared. Please try again.");
       setPhase("error");
@@ -342,6 +345,9 @@ function LicensedView({ offer }: { offer: Offer }) {
     try {
       // Must run straight from the tap: iOS only opens the share sheet for a user gesture.
       await navigator.share({ files: [prepared.file], title: offer.title });
+      // share() resolves once the person finishes in the menu (for example Save Video).
+      setDoneMessage("Saved. Find the video in Photos or Files, wherever you chose to save it.");
+      setPhase("done");
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === "AbortError") return; // closed the sheet
       setError("The share menu couldn't open. Use \"Download file\" below instead.");
@@ -403,7 +409,30 @@ function LicensedView({ offer }: { offer: Offer }) {
           </div>
 
           <div className="mt-6 border-t border-border pt-6">
-            {hasDownloadAccess ? (
+            {hasDownloadAccess && phase === "done" ? (
+              <div className="rounded-lg border border-success bg-success-bg px-4 py-4" role="status" aria-live="polite">
+                <p className="flex items-center gap-2 text-sm font-semibold text-success">
+                  <CheckCircle size={18} /> {prepared?.file ? "Video saved" : "Download started"}
+                </p>
+                <p className="mt-1 text-sm text-text-secondary">{doneMessage}</p>
+                {!prepared?.file && prepared?.url && (
+                  <p className="mt-1 text-xs text-text-secondary">
+                    Nothing happened?{" "}
+                    <a href={prepared.url} className="font-medium text-brand underline" rel="noopener">
+                      Download it here
+                    </a>
+                    .
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => (prepared?.file ? void saveWithShareSheet() : void prepareDownload())}
+                  className="mt-3 text-sm font-medium text-brand underline underline-offset-2"
+                >
+                  {prepared?.file ? "Save it again" : "Download again"}
+                </button>
+              </div>
+            ) : hasDownloadAccess ? (
               <>
                 {phase === "ready" && prepared?.file ? (
                   <>
