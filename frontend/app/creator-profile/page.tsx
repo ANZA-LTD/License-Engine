@@ -20,7 +20,10 @@ import { UploadVideo } from "@/components/content/UploadVideo";
 import { formatDuration, listMyVideos, publishOffer } from "@/lib/api";
 import { OfferSummary, OwnedVideo, VideoRecord } from "@/lib/types";
 import { formatPrice } from "@/lib/price";
-import { probeSigner, SignerProbe } from "@/lib/nostr";
+import { probeSigner, toProbe, SignerProbe } from "@/lib/nostr";
+import { subscribeSigner } from "@/lib/signer";
+import { SignInPanel } from "@/components/signer/SignInPanel";
+import { SIGNUP_URL } from "@/lib/site";
 
 type LibraryState = "loading" | "unauthenticated" | "ready" | "error";
 
@@ -78,11 +81,16 @@ export default function CreatorProfilePage() {
   }, []);
 
   useEffect(() => {
-    void probeSigner().then((result) => {
-      setSigner(result);
-      if (result.status === "connected") void refresh();
-    });
-  }, [refresh]);
+    void probeSigner().then(setSigner);
+    return subscribeSigner((next) => setSigner(toProbe(next)));
+  }, []);
+
+  const signedInAs = signer?.status === "connected" ? signer.pubkey : null;
+  useEffect(() => {
+    if (signer === null) return;
+    if (signedInAs) void refresh();
+    else setState("unauthenticated");
+  }, [signer, signedInAs, refresh]);
 
   async function handleUploaded(_video: VideoRecord) {
     setShowUpload(false);
@@ -218,11 +226,8 @@ export default function CreatorProfilePage() {
 
               {state === "unauthenticated" && (
                 <div className="mt-8 rounded-xl border border-amber-200 bg-amber-50 p-5">
-                  <p className="font-medium text-amber-800">A Nostr signer is required.</p>
-                  <p className="mt-1 text-sm text-amber-700">
-                    Your videos are private to your Nostr identity. Install and unlock Alby or
-                    Flamingo, then reload this page. Your key never reaches this app.
-                  </p>
+                  <p className="mb-3 font-medium text-amber-800">Sign in to see your videos.</p>
+                  <SignInPanel mode="signin" createAccountUrl={SIGNUP_URL} />
                 </div>
               )}
 

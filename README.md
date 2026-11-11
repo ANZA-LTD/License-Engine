@@ -28,7 +28,7 @@ Creators also spend too much time waiting to be discovered. ANZA gives them a wa
 ANZA turns a creator's offer into a shareable, signed record:
 
 1. A creator enters the content reference, target brand, price in sats, rights, and duration.
-2. The creator signs the offer in their browser using a Nostr signer extension.
+2. The creator signs the offer in their browser with a NIP-07 Nostr signer, or with an optional signer provider plugged in by the operator.
 3. ANZA verifies the signature, stores workflow state in PostgreSQL, and publishes the signed offer to configured Nostr relays.
 4. The creator shares the public offer link with a brand.
 5. The brand starts an account-free purchase. For staging and production, ANZA resolves the Lightning Address fixed in the creator-signed offer, sends a NIP-57 Zap request, and returns an invoice from the creator's Lightning service.
@@ -37,7 +37,7 @@ ANZA turns a creator's offer into a shareable, signed record:
 ```mermaid
 flowchart LR
     C[Creator] -->|Sets price & license terms| F[ANZA offer form]
-    F -->|NIP-07 signature| A[Node.js API]
+    F -->|Creator signature| A[Node.js API]
     A -->|Persist workflow state| P[(PostgreSQL)]
     A -->|Offer and Zap receipt events| N[Nostr relays]
     F -->|Share link| B[Brand]
@@ -63,7 +63,7 @@ flowchart LR
 | Capability | Status | What it does |
 | --- | :---: | --- |
 | Creator offer form | ✅ | Captures title, description, public content URL, brand, sats price, rights, and duration. |
-| Browser-based Nostr signing | ✅ | Uses a NIP-07 browser signer so private keys stay out of ANZA. |
+| Browser-based Nostr signing | ✅ | NIP-07 browser signers, or an optional signer provider exposing the same calls. Private keys stay out of the engine. |
 | Signed API authentication | ✅ | Binds authenticated creator requests to method, URL, body, and idempotency key. |
 | Nostr offer publication | ✅ | Verifies an offer event, queues it durably, and retries relay publication until acknowledged. |
 | Public offer link | ✅ | Lets a brand review the exact content reference, terms, price, and Nostr event ID. |
@@ -131,7 +131,7 @@ The creator-signed offer binds the entered Lightning Address, but that signature
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         Next.js frontend :3001                        │
-│  Create offer • NIP-07 signing • Public offer • QR payment screen    │
+│  Create offer • on-device signing • Public offer • QR payment screen│
 └──────────────────────────────┬───────────────────────────────────────┘
                                │ HTTP / JSON
 ┌──────────────────────────────▼───────────────────────────────────────┐
@@ -161,7 +161,7 @@ LND/regtest adapter; it cannot send real mainnet payments.
 | UI | Tailwind CSS, Lucide, `qrcode.react` | Responsive screens, icons, Lightning QR code |
 | Backend | Node.js 22, native HTTP modules | Validation, API, workflow coordination |
 | Database | PostgreSQL 17 via Docker Compose | Offers, idempotency records, relay outbox |
-| Nostr | `nostr-tools`, NIP-07 signer | Event signing and verification |
+| Nostr | `nostr-tools`, NIP-07 signer (or a pluggable signer provider) | Event signing and verification |
 | Payments | Polar/LND locally; LNURL-pay and NIP-57 on mainnet | Local regression plus direct creator payments and signed receipt verification |
 | Testing | Node test runner | Contract, validation, Nostr, LND, and persistence tests |
 
@@ -184,7 +184,7 @@ Full backend contracts live in [`backend/docs/openapi.json`](backend/docs/openap
 
 - Node.js **22+**
 - Docker and Docker Compose
-- A Nostr NIP-07 signer extension, such as nos2x, for creating offers
+- A Nostr NIP-07 signer extension, such as nos2x, for creating offers (or a configured signer provider)
 - Polar with a Creator LND node for the Lightning demo
 
 ### 1. Start PostgreSQL
@@ -271,7 +271,7 @@ strfry.conf + the strfry service in compose.yaml are local development only. Pro
 
 ## Security and privacy principles
 
-- **Private keys stay in the signer.** The frontend requests NIP-07 signatures; it does not collect or transmit a creator's private key.
+- **Private keys stay in the signer.** The frontend requests NIP-07-style signatures from a browser extension or a configured signer provider; it does not collect or transmit a creator's private key, and the backend verifies every signature.
 - **Secrets stay local.** `.env` files, LND macaroons, database credentials, and tunnel tokens must never be committed.
 - **Terms are validated before storage or publication.** Invalid prices, missing fields, contradictory durations, and unsafe content URLs are rejected.
 - **Offer publication is durable.** A PostgreSQL outbox retries relays and does not report success until a relay acknowledges the exact event ID.
