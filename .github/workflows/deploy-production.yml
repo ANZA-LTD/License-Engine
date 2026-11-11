@@ -1,0 +1,68 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [production]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: anza-production
+  REGION: europe-west1
+  REGISTRY: europe-west1-docker.pkg.dev/anza-production/anza
+  RUNTIME_SA: anza-runtime@anza-production.iam.gserviceaccount.com
+  SQL_INSTANCE: anza-production:europe-west1:anza-production-db
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ vars.PROD_WIF_PROVIDER }}
+          service_account: ${{ vars.PROD_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+
+      # --- API (backend) -------------------------------------------------------
+      - run: |
+          docker build -t $REGISTRY/le-api:${{ github.sha }} ./backend
+          docker push $REGISTRY/le-api:${{ github.sha }}
+      # Database migrations run with the new image before the API that needs them goes live.
+      - run: |
+          gcloud run jobs deploy le-migrate --image $REGISTRY/le-api:${{ github.sha }} --region $REGION \
+            --service-account $RUNTIME_SA --set-cloudsql-instances $SQL_INSTANCE \
+            --set-secrets DATABASE_URL=le-database-url:latest \
+            --command npm --args run,migrate --max-retries 0 --quiet
+          gcloud run jobs execute le-migrate --region $REGION --wait
+      - run: |
+          gcloud run deploy le-api --image $REGISTRY/le-api:${{ github.sha }} --region $REGION --platform managed \
+            --allow-unauthenticated --service-account $RUNTIME_SA --add-cloudsql-instances $SQL_INSTANCE \
+            --set-env-vars "^|^NODE_ENV=production|APP_ENV=production|PAYMENT_NETWORK=mainnet|PAYMENT_ENABLED=true|PUBLIC_ORIGIN=https://api.anzaltd.com|CORS_ORIGINS=https://studio.anzaltd.com|NOSTR_RELAYS=wss://relay.damus.io,wss://nos.lol,wss://relay.nostr.band|NOSTR_OFFER_KIND=9998|NOSTR_ATTESTOR_PUBKEY=${{ vars.PROD_NOSTR_ATTESTOR_PUBKEY }}|CLOUDINARY_CLOUD_NAME=dgiocioqk|CLOUDINARY_FOLDER=anza/production/videos|CLOUDINARY_WATERMARK_LANDSCAPE=Anza-Landscape-Watermark_b6hq1l|CLOUDINARY_WATERMARK_PORTRAIT=Anza-Potrait-Watermark_ulrtxu|DB_MAX=3|SWAGGER_UI_USERNAME=anza-docs" \
+            --set-secrets "SWAGGER_UI_PASSWORD=le-docs-password:latest,DATABASE_URL=le-database-url:latest,NOSTR_ATTESTOR_PRIVATE_KEY=le-attestor-private-key:latest,LE_ATTESTATION_SECRET=le-attestation-secret:latest,CLOUDINARY_API_KEY=cloudinary-api-key:latest,CLOUDINARY_API_SECRET=cloudinary-api-secret:latest" \
+            --quiet
+
+      # --- Studio (frontend) ---------------------------------------------------
+      - run: |
+          docker build -t $REGISTRY/studio:${{ github.sha }} \
+            --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.anzaltd.com/api \
+            --build-arg NEXT_PUBLIC_NOSTR_OFFER_KIND=9998 \
+            --build-arg NEXT_PUBLIC_NOSTR_ATTESTOR_PUBKEY=${{ vars.PROD_NOSTR_ATTESTOR_PUBKEY }} \
+            --build-arg NEXT_PUBLIC_CHECKOUT_PROVIDER_URL=https://app.anzaltd.com/checkout/anza-checkout.js \
+            --build-arg NEXT_PUBLIC_SIGNER_PROVIDER_URL=https://app.anzaltd.com/signer/anza-signer.js \
+            --build-arg NEXT_PUBLIC_ONBOARD_URL=https://app.anzaltd.com/why-onboard \
+            --build-arg NEXT_PUBLIC_SIGNUP_URL=https://app.anzaltd.com/onboarding \
+            --build-arg NEXT_PUBLIC_SITE_URL=https://studio.anzaltd.com \
+            ./frontend
+          docker push $REGISTRY/studio:${{ github.sha }}
+      - run: |
+          gcloud run deploy studio --image $REGISTRY/studio:${{ github.sha }} --region $REGION --platform managed \
+            --allow-unauthenticated --service-account $RUNTIME_SA --quiet
