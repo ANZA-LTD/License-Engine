@@ -6,8 +6,7 @@ import type { FiatPrice } from "./price";
  * Optional external checkout providers.
  *
  * The licensing engine settles payments over Lightning on its own. An operator
- * can additionally plug in an external checkout (for example card or mobile
- * money) by setting NEXT_PUBLIC_CHECKOUT_PROVIDER_URL to a script that
+ * can additionally plug in an external checkout by setting NEXT_PUBLIC_CHECKOUT_PROVIDER_URL to a script that
  * registers `window.ContentPortCheckout`. The provider runs its own payment
  * flow, reports the settled payment to the engine service-to-service, and
  * hands the buyer back a download credential. Without the setting, nothing
@@ -26,7 +25,7 @@ export interface CheckoutOffer {
 export interface CheckoutOption {
   /** Provider-defined id, passed back to start(). */
   id: string;
-  /** Short button label, e.g. "M-Pesa or card". */
+  /** Short button label, e.g. "Card". */
   label: string;
   /** One line shown under the label. */
   description?: string;
@@ -39,8 +38,17 @@ export interface CheckoutResult {
   credential: string;
 }
 
+/** Offer-form wording the provider supplies for its enrolled creators. */
+export interface CreatorCopy {
+  priceHint?: string;
+  lightningAddressHint?: string;
+  payoutSummary?: string;
+  payoutSummaryWithLightning?: string;
+}
+
 export interface CheckoutProvider {
   name: string;
+  creatorCopy?: CreatorCopy;
   /** Whether a creator is enrolled with this provider (affects the offer form). */
   isCreatorEnrolled?(creatorPubkey: string): Promise<boolean>;
   /** Payment options this provider offers for an offer; [] when it has none. */

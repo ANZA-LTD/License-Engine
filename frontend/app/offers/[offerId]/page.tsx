@@ -217,9 +217,9 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
 }
 
 /**
- * The download code a brand receives by email is the purchase credential: a
+ * The download code a buyer receives with the purchase is the credential: a
  * 64-character secret only the buyer holds. Spaces and dashes are ignored so
- * a code copied from the email in groups still works.
+ * a code copied in groups still works.
  */
 function normaliseDownloadCode(input: string): string | null {
   const code = input.replace(/[\s-]/g, "").toLowerCase();
@@ -255,7 +255,7 @@ function LicensedView({ offer }: { offer: Offer }) {
   const autoAttempted = useRef(false);
 
   // The buyer proves the purchase with a secret: the download code (from the
-  // checkout on this device, or from the receipt email link ?code=...), a
+  // checkout on this device, or from a ?code=... link the provider sent), a
   // fresh grant from the checkout redirect, or a Lightning purchase token.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -286,7 +286,7 @@ function LicensedView({ offer }: { offer: Offer }) {
     if (initialGrant) return initialGrant;
     const purchaseId = offer.purchaseId || getStoredPurchaseId(offer.offerId);
     if (purchaseId) return (await issueDownloadGrant(purchaseId, offer.offerId)).grantToken;
-    throw new Error("Enter the download code from your receipt email to download.");
+    throw new Error("Enter the download code you received with your purchase to download.");
   };
 
   const prepareDownload = async (code: string | null = credential) => {
@@ -352,7 +352,7 @@ function LicensedView({ offer }: { offer: Offer }) {
     e.preventDefault();
     const code = normaliseDownloadCode(codeInput);
     if (!code) {
-      setError("That doesn't look like a download code. It's the 64-character code in your receipt email.");
+      setError("That doesn't look like a download code. It's the 64-character code you received with your purchase.");
       return;
     }
     setPhase("preparing");
@@ -361,7 +361,7 @@ function LicensedView({ offer }: { offer: Offer }) {
       await issueExternalDownloadGrant(offer.offerId, code); // checks the code against this offer
     } catch {
       setPhase("error");
-      setError("That code doesn't match this license. Check the email for this offer and try again.");
+      setError("That code doesn't match this license. Check the code for this offer and try again.");
       return;
     }
     storeExternalCredential(offer.offerId, code);
@@ -434,7 +434,7 @@ function LicensedView({ offer }: { offer: Offer }) {
               <form onSubmit={unlockWithCode} className="space-y-3">
                 <p className="text-sm font-semibold text-text-primary">Bought this license?</p>
                 <p className="text-xs text-text-secondary">
-                  Enter the download code from your receipt email, or open the link in that email.
+                  Enter the download code you received with your purchase.
                 </p>
                 <input
                   value={codeInput}

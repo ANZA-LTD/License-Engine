@@ -28,7 +28,7 @@ Creators also spend too much time waiting to be discovered. ANZA gives them a wa
 ANZA turns a creator's offer into a shareable, signed record:
 
 1. A creator enters the content reference, target brand, price in sats, rights, and duration.
-2. The creator signs the offer on their own device: with their Anza key (created and locked on their phone with a fingerprint / face or recovery password), their own Nostr signer app, or a browser extension.
+2. The creator signs the offer in their browser with a NIP-07 Nostr signer, or with an optional signer provider plugged in by the operator.
 3. ANZA verifies the signature, stores workflow state in PostgreSQL, and publishes the signed offer to configured Nostr relays.
 4. The creator shares the public offer link with a brand.
 5. The brand starts an account-free purchase. For staging and production, ANZA resolves the Lightning Address fixed in the creator-signed offer, sends a NIP-57 Zap request, and returns an invoice from the creator's Lightning service.
@@ -63,7 +63,7 @@ flowchart LR
 | Capability | Status | What it does |
 | --- | :---: | --- |
 | Creator offer form | ✅ | Captures title, description, public content URL, brand, sats price, rights, and duration. |
-| On-device Nostr signing | ✅ | Built-in Anza signer (key created and locked on the creator's device with a passkey or NIP-49 password), NIP-46 signer apps, or NIP-07 extensions. ANZA's servers never receive an unlocked key. |
+| Browser-based Nostr signing | ✅ | NIP-07 browser signers, or an optional signer provider (`NEXT_PUBLIC_SIGNER_PROVIDER_URL`) exposing the same calls. Private keys stay out of the engine. |
 | Signed API authentication | ✅ | Binds authenticated creator requests to method, URL, body, and idempotency key. |
 | Nostr offer publication | ✅ | Verifies an offer event, queues it durably, and retries relay publication until acknowledged. |
 | Public offer link | ✅ | Lets a brand review the exact content reference, terms, price, and Nostr event ID. |
@@ -161,7 +161,7 @@ LND/regtest adapter; it cannot send real mainnet payments.
 | UI | Tailwind CSS, Lucide, `qrcode.react` | Responsive screens, icons, Lightning QR code |
 | Backend | Node.js 22, native HTTP modules | Validation, API, workflow coordination |
 | Database | PostgreSQL 17 via Docker Compose | Offers, idempotency records, relay outbox |
-| Nostr | `nostr-tools`, Anza signer (passkey PRF / NIP-49), NIP-46, NIP-07 | Event signing and verification |
+| Nostr | `nostr-tools`, NIP-07 signer (or a pluggable signer provider) | Event signing and verification |
 | Payments | Polar/LND locally; LNURL-pay and NIP-57 on mainnet | Local regression plus direct creator payments and signed receipt verification |
 | Testing | Node test runner | Contract, validation, Nostr, LND, and persistence tests |
 
@@ -184,7 +184,7 @@ Full backend contracts live in [`backend/docs/openapi.json`](backend/docs/openap
 
 - Node.js **22+**
 - Docker and Docker Compose
-- An Anza identity (created in the Anza app), a NIP-46 signer app, or a NIP-07 extension such as nos2x, for creating offers
+- A Nostr NIP-07 signer extension, such as nos2x, for creating offers (or a configured signer provider)
 - Polar with a Creator LND node for the Lightning demo
 
 ### 1. Start PostgreSQL
@@ -271,7 +271,7 @@ strfry.conf + the strfry service in compose.yaml are local development only. Pro
 
 ## Security and privacy principles
 
-- **Private keys stay on the creator's device.** The Anza signer creates the key in the browser and stores it only locked: under a passkey (WebAuthn PRF, AES-256-GCM) and/or a recovery password (NIP-49). The unlocked key lives only in the tab's memory and auto-locks after 30 minutes idle. Creator Platform keeps the locked copy for sign-in on other devices and cannot open it. Signer apps (NIP-46) and extensions (NIP-07) are also supported. The one trust assumption is the signing code itself, which is open source (`frontend/lib/signer.ts`); creators who prefer can use their own signer and can export their key at any time.
+- **Private keys stay in the signer.** The frontend requests NIP-07-style signatures from a browser extension or a configured signer provider; it does not collect or transmit a creator's private key, and the backend verifies every signature.
 - **Secrets stay local.** `.env` files, LND macaroons, database credentials, and tunnel tokens must never be committed.
 - **Terms are validated before storage or publication.** Invalid prices, missing fields, contradictory durations, and unsafe content URLs are rejected.
 - **Offer publication is durable.** A PostgreSQL outbox retries relays and does not report success until a relay acknowledges the exact event ID.
@@ -306,90 +306,61 @@ Built for creators who should be able to say: **this is my work, these are my te
 
 </div>
 
-## ANZA application floorplan
+## Architecture
 
 ```mermaid
 flowchart LR
-  subgraph AUI["ANZA User Interface · anza-user-interface/client"]
-    AUIRoutes["Home, onboarding, Nostr identity, profile, offer and checkout pages"]
-    Proxy["Next.js API proxy: /api/proxy/*"]
-    AUIRoutes --> Proxy
-  end
-
-  subgraph CPBE["Creator Platform Backend · creator-platform-be"]
-    Identity["POST /api/creators/nostr-identity"]
-    Profile["POST, GET /api/creators/profile"]
-    PurchaseRoute["POST /api/purchase/route"]
-    OfferProxy["GET /api/offers/:id"]
-    PayoutContact["GET /internal/creators/:id/payout · HMAC"]
-    CreatorDB[("Creator accounts, Nostr identities, payout contacts")]
-  end
-
-  subgraph LEFE["License Engine frontend · License-Engine/frontend"]
-    CreatorScreens["Sign in, creator profile, create offer, upload content"]
-    BrandScreens["Offer details, share, Lightning payment, payment status"]
+  subgraph FE["License Engine frontend · frontend"]
+    CreatorScreens["Creator profile, upload content, create and publish offers"]
+    BrandScreens["Offer page, Lightning payment, license and download"]
     LEApi["lib/api.ts · Nostr-signed API requests"]
     CreatorScreens --> LEApi
     BrandScreens --> LEApi
   end
 
-  subgraph LE["License Engine backend · License-Engine/backend"]
+  subgraph BE["License Engine backend · backend"]
     OfferAPI["POST /api/offers · GET /api/offers/:id · POST /api/offers/:id/publish"]
     VideoAPI["POST /api/videos/upload-authorization · POST /api/videos"]
     ZapAPI["POST /api/offers/:id/payment · GET /api/purchases/:id/status"]
-    GrantAPI["POST /api/purchases/:id/download-grant · GET /api/downloads/:token"]
-    ExternalAttest["POST /api/offers/:id/external-payment-attestation"]
-    LEStore[("PostgreSQL · offers, purchases, grants, outbox")]
-  end
-
-  subgraph PM["Payment Microservice · payment-microservice"]
-    Initiate["POST /payments/initiate/:offerId"]
-    Verify["POST /webhooks/paystack · GET /payments/:reference"]
-    Fulfill["POST /payments/:reference/fulfill"]
-    Orchestrate["orchestrator.js · verify payment, payout, attest license"]
-    Payout["Daraja payout adapter"]
-    PMStore[("PostgreSQL · payments, payouts, audit")]
+    GrantAPI["download grants · GET /api/downloads/:token"]
+    ExternalAttest["POST /api/offers/:id/external-payment-attestation (service-to-service)"]
+    Store[("PostgreSQL · offers, purchases, grants, outbox")]
   end
 
   subgraph External["External services"]
     Cloudinary["Cloudinary · direct browser upload and protected media"]
     Nostr["Nostr signer and relays · signed offer, Zap receipt, license event"]
     Lightning["Creator LNURL-pay / NIP-57 Zap; local Polar/LND in development"]
-    Paystack["Paystack checkout and signed webhook"]
-    DarajaSvc["Safaricom Daraja"]
   end
 
-  Proxy --> Identity
-  Proxy --> Profile
-  Identity --> CreatorDB
-  Profile --> CreatorDB
+  subgraph Optional["Optional, operator-supplied"]
+    Signer["Signer provider script · window.ContentPortSigner"]
+    Checkout["Checkout provider script · window.ContentPortCheckout"]
+    PaySvc["External payment service"]
+  end
+
   LEApi --> OfferAPI
   LEApi --> VideoAPI
   LEApi --> ZapAPI
   LEApi --> GrantAPI
   LEApi --> Nostr
   LEApi -->|"signed upload parameters, then direct browser upload"| Cloudinary
-  OfferAPI --> LEStore
-  ZapAPI --> LEStore
-  GrantAPI --> LEStore
+  OfferAPI --> Store
+  ZapAPI --> Store
+  GrantAPI --> Store
   ZapAPI --> Lightning
   Lightning --> Nostr
   Nostr -->|"verified receipt can trigger license"| ZapAPI
-  PurchaseRoute -->|"fetch authoritative offer"| OfferProxy
-  OfferProxy --> OfferAPI
-  PurchaseRoute --> CreatorDB
-  AUIRoutes -->|"Paystack checkout via lib/payment.ts"| Initiate
-  Initiate --> Paystack
-  Paystack -->|"signed callback"| Verify
-  Verify --> Orchestrate
-  Orchestrate --> PMStore
-  Orchestrate --> PayoutContact
-  Orchestrate --> Payout
-  Payout --> DarajaSvc
-  Orchestrate -->|"after required payment and payout checks"| ExternalAttest
-  ExternalAttest --> LEStore
+  GrantAPI -->|"only after a valid purchase"| Cloudinary
+  CreatorScreens -.-> Signer
+  BrandScreens -.-> Checkout
+  Checkout -.-> PaySvc
+  PaySvc -.->|"settled payment"| ExternalAttest
+  ExternalAttest --> Store
   ExternalAttest -->|"publish license event"| Nostr
-  GrantAPI -->|"only after valid purchase/license grant"| Cloudinary
-
-  Identity -.->|"shared public Nostr key; no profile-sync API"| LEApi
 ```
+
+The engine runs on its own with NIP-07 signing and Lightning payments. An
+operator can add a signer provider, a checkout provider and an external payment
+service through the documented interfaces (`frontend/lib/signerProvider.ts`,
+`frontend/lib/checkout.ts`, and the attestation endpoint); none are required.

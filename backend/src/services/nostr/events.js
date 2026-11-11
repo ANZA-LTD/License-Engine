@@ -28,7 +28,7 @@ export function buildLicenseEvent({ kind, attestorPubkey, offerEvent, settlement
   if (settlement.offer_event_id !== offerEvent.id) throw new TypeError('Offer reference mismatch');
   const isExternal = Boolean(settlement.external_reference) && !settlement.payment_hash;
   // Lightning path remains anchored to the signed satoshi amount. External
-  // (KES) payments are priced by the Payment Microservice mapping, so the
+  // (fiat) payments are priced by the external payment service, so the
   // placeholder amount_sats must not be compared for external attestations.
   if (!isExternal) {
     // A sats-priced offer must be paid its exact signed amount. A fiat-priced

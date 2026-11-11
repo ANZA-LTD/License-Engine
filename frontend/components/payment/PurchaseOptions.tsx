@@ -22,7 +22,7 @@ type Choice =
 
 /**
  * Purchase control for the public offer page. Lists every way this offer can be
- * paid: the configured external checkout's options (for example M-Pesa or card)
+ * paid: the configured external checkout's options
  * and Bitcoin Lightning when the offer carries a Lightning Address. External
  * checkouts run in place on this page; Lightning keeps its own invoice page.
  */
