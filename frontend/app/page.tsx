@@ -80,7 +80,8 @@ export default function LandingPage() {
     <>
       <LandingHeader />
 
-      {/* Sign-up notice. */}
+      {/* Sign-up notice, shown when the operator configures a sign-up page (NEXT_PUBLIC_SIGNUP_URL). */}
+      {SIGNUP_URL && (
       <div className="border-b border-amber-200 bg-gradient-to-r from-amber-100 via-orange-50 to-yellow-50">
         <div className="mx-auto flex max-w-page flex-col items-center justify-between gap-3 px-4 py-3 text-sm text-slate-800 sm:flex-row sm:px-6">
           <p className="flex items-center gap-2 font-medium">
@@ -93,10 +94,11 @@ export default function LandingPage() {
             href={SIGNUP_URL}
             className="inline-flex items-center rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-sm transition-colors hover:bg-amber-50"
           >
-            Create your identity
+            Create your account
           </a>
         </div>
       </div>
+      )}
 
       <main>
         <div className="relative isolate overflow-x-clip bg-gradient-to-b from-white via-slate-50 to-slate-100">

@@ -102,4 +102,4 @@ https://www.postman.com/galactic-escape-972188/anza/collection/g4eqixa/contentpo
 - Payment pending: check receipt on relays
 ## Architecture
 
-See the architecture section of the main README.
+See the [architecture diagram](../README.md#architecture) in the main README.

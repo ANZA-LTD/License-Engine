@@ -4,4 +4,4 @@ The creator form uses the live ContentPort backend and a NIP-07 Nostr browser si
 
 ## Architecture
 
-See the architecture section of the main README.
+See the [architecture diagram](../README.md#architecture) in the main README.

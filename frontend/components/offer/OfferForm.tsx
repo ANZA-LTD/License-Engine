@@ -8,13 +8,11 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { createOffer, getMyVideo } from "@/lib/api";
 import { LicenseType, CreateOfferPayload, OfferSummary } from "@/lib/types";
-import { probeSigner, toProbe, SignerProbe } from "@/lib/nostr";
-import { subscribeSigner } from "@/lib/signer";
+import { probeSigner, subscribeSigner, SignerProbe } from "@/lib/nostr";
 import { SignInPanel } from "@/components/signer/SignInPanel";
-import { SIGNUP_URL } from "@/lib/site";
 import { canCreateOfferFromUploadedVideo } from "@/lib/offerAccess";
 import { fiatMinorToSats, useBtcRate } from "@/lib/price";
-import { loadCheckoutProvider } from "@/lib/checkout";
+import { loadCheckoutProvider, type CreatorCopy } from "@/lib/checkout";
 import {
   LICENSE_TYPE_DESCRIPTIONS,
   LICENSE_TYPE_LABELS,
@@ -63,6 +61,8 @@ export function OfferForm() {
   // it and does not need a Lightning Address. Until
   // that is known, the address stays required.
   const [enrolled, setEnrolled] = useState(false);
+  // Wording supplied by the checkout provider for its enrolled creators.
+  const [creatorCopy, setCreatorCopy] = useState<CreatorCopy | null>(null);
   const rate = useBtcRate("KES");
   const satsEstimate =
     rate && form.priceKes > 0 ? fiatMinorToSats(Math.round(form.priceKes) * 100, rate.btc_price_minor) : null;
@@ -73,7 +73,7 @@ export function OfferForm() {
 
   useEffect(() => {
     void probeSigner().then(setSigner);
-    return subscribeSigner((state) => setSigner(toProbe(state)));
+    return subscribeSigner(setSigner);
   }, []);
 
   const signerPubkey = signer?.status === "connected" ? signer.pubkey : null;
@@ -85,7 +85,10 @@ export function OfferForm() {
       if (!provider?.isCreatorEnrolled || cancelled) return;
       try {
         const isEnrolled = await provider.isCreatorEnrolled(signerPubkey);
-        if (!cancelled) setEnrolled(isEnrolled);
+        if (!cancelled) {
+          setEnrolled(isEnrolled);
+          setCreatorCopy(isEnrolled ? provider.creatorCopy ?? null : null);
+        }
       } catch {
         /* Unknown enrolment keeps the Lightning Address required. */
       }
@@ -301,8 +304,8 @@ export function OfferForm() {
               label="How you get paid"
               value={
                 form.creatorLightningAddress.trim()
-                  ? "Through your payment provider, or Bitcoin to your Lightning Address if the brand pays that way"
-                  : "Through your payment provider"
+                  ? creatorCopy?.payoutSummaryWithLightning ?? "Through your payment provider, or Bitcoin to your Lightning Address if the brand pays that way"
+                  : creatorCopy?.payoutSummary ?? "Through your payment provider"
               }
             />
           )}
@@ -417,10 +420,10 @@ export function OfferForm() {
             onChange={(e) => update("priceKes", Number(e.target.value))}
             error={errors.priceKes}
             hint={
-              // Enrolled creators are paid in shillings, so sats are only
-              // mentioned when they also accept Bitcoin.
+              // Enrolled creators are paid through their provider, so sats are
+              // only mentioned when they also accept Bitcoin.
               enrolled && !form.creatorLightningAddress.trim()
-                ? "What the brand pays through your payment provider."
+                ? creatorCopy?.priceHint ?? "What the brand pays through your payment provider."
                 : satsEstimate
                   ? `≈ ${satsEstimate.toLocaleString()} sats at today's rate. Bitcoin buyers pay the live equivalent.`
                   : "Bitcoin buyers pay the live sats equivalent."
@@ -447,7 +450,7 @@ export function OfferForm() {
           placeholder="creator@example.com"
           hint={
             enrolled
-              ? "Only add this if you also want to accept Bitcoin."
+              ? creatorCopy?.lightningAddressHint ?? "Only add this if you also want to accept Bitcoin."
               : "Where Bitcoin payments are sent. It is included in your signed offer, so changing it later means publishing a new offer."
           }
           value={form.creatorLightningAddress}
@@ -494,10 +497,12 @@ function SignerBanner({ signer }: { signer: SignerProbe | null }) {
   return (
     <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm">
       <p className="mb-3 font-medium text-amber-800">Sign in to sign and publish this offer.</p>
-      <SignInPanel mode="signin" createAccountUrl={SIGNUP_URL} />
+      <SignInPanel locked={signer.status === "locked"} />
     </div>
   );
-}function PreviewRow({ label, value }: { label: string; value: string }) {
+}
+
+function PreviewRow({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <dt className="text-xs font-semibold uppercase tracking-wide text-text-secondary">

@@ -38,8 +38,17 @@ export interface CheckoutResult {
   credential: string;
 }
 
+/** Offer-form wording the provider supplies for its enrolled creators. */
+export interface CreatorCopy {
+  priceHint?: string;
+  lightningAddressHint?: string;
+  payoutSummary?: string;
+  payoutSummaryWithLightning?: string;
+}
+
 export interface CheckoutProvider {
   name: string;
+  creatorCopy?: CreatorCopy;
   /** Whether a creator is enrolled with this provider (affects the offer form). */
   isCreatorEnrolled?(creatorPubkey: string): Promise<boolean>;
   /** Payment options this provider offers for an offer; [] when it has none. */

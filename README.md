@@ -63,7 +63,7 @@ flowchart LR
 | Capability | Status | What it does |
 | --- | :---: | --- |
 | Creator offer form | ✅ | Captures title, description, public content URL, brand, sats price, rights, and duration. |
-| Browser-based Nostr signing | ✅ | NIP-07 browser signers, or an optional signer provider exposing the same calls. Private keys stay out of the engine. |
+| Browser-based Nostr signing | ✅ | NIP-07 browser signers, or an optional signer provider (`NEXT_PUBLIC_SIGNER_PROVIDER_URL`) exposing the same calls. Private keys stay out of the engine. |
 | Signed API authentication | ✅ | Binds authenticated creator requests to method, URL, body, and idempotency key. |
 | Nostr offer publication | ✅ | Verifies an offer event, queues it durably, and retries relay publication until acknowledged. |
 | Public offer link | ✅ | Lets a brand review the exact content reference, terms, price, and Nostr event ID. |
@@ -308,4 +308,59 @@ Built for creators who should be able to say: **this is my work, these are my te
 
 ## Architecture
 
-See the architecture section of the main README.
+```mermaid
+flowchart LR
+  subgraph FE["License Engine frontend · frontend"]
+    CreatorScreens["Creator profile, upload content, create and publish offers"]
+    BrandScreens["Offer page, Lightning payment, license and download"]
+    LEApi["lib/api.ts · Nostr-signed API requests"]
+    CreatorScreens --> LEApi
+    BrandScreens --> LEApi
+  end
+
+  subgraph BE["License Engine backend · backend"]
+    OfferAPI["POST /api/offers · GET /api/offers/:id · POST /api/offers/:id/publish"]
+    VideoAPI["POST /api/videos/upload-authorization · POST /api/videos"]
+    ZapAPI["POST /api/offers/:id/payment · GET /api/purchases/:id/status"]
+    GrantAPI["download grants · GET /api/downloads/:token"]
+    ExternalAttest["POST /api/offers/:id/external-payment-attestation (service-to-service)"]
+    Store[("PostgreSQL · offers, purchases, grants, outbox")]
+  end
+
+  subgraph External["External services"]
+    Cloudinary["Cloudinary · direct browser upload and protected media"]
+    Nostr["Nostr signer and relays · signed offer, Zap receipt, license event"]
+    Lightning["Creator LNURL-pay / NIP-57 Zap; local Polar/LND in development"]
+  end
+
+  subgraph Optional["Optional, operator-supplied"]
+    Signer["Signer provider script · window.ContentPortSigner"]
+    Checkout["Checkout provider script · window.ContentPortCheckout"]
+    PaySvc["External payment service"]
+  end
+
+  LEApi --> OfferAPI
+  LEApi --> VideoAPI
+  LEApi --> ZapAPI
+  LEApi --> GrantAPI
+  LEApi --> Nostr
+  LEApi -->|"signed upload parameters, then direct browser upload"| Cloudinary
+  OfferAPI --> Store
+  ZapAPI --> Store
+  GrantAPI --> Store
+  ZapAPI --> Lightning
+  Lightning --> Nostr
+  Nostr -->|"verified receipt can trigger license"| ZapAPI
+  GrantAPI -->|"only after a valid purchase"| Cloudinary
+  CreatorScreens -.-> Signer
+  BrandScreens -.-> Checkout
+  Checkout -.-> PaySvc
+  PaySvc -.->|"settled payment"| ExternalAttest
+  ExternalAttest --> Store
+  ExternalAttest -->|"publish license event"| Nostr
+```
+
+The engine runs on its own with NIP-07 signing and Lightning payments. An
+operator can add a signer provider, a checkout provider and an external payment
+service through the documented interfaces (`frontend/lib/signerProvider.ts`,
+`frontend/lib/checkout.ts`, and the attestation endpoint); none are required.
