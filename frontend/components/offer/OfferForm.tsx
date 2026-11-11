@@ -274,7 +274,7 @@ export function OfferForm() {
 
         <SignerBanner signer={signer} />
 
-        <dl className="mb-6 space-y-4 rounded-lg bg-surface p-5">
+        <dl className="mb-6 min-w-0 space-y-4 rounded-lg bg-surface p-5">
           <PreviewRow label="Content title" value={form.title} />
           <PreviewRow label="Description" value={form.description} />
           <PreviewRow
@@ -503,7 +503,7 @@ function SignerBanner({ signer }: { signer: SignerProbe | null }) {
       <dt className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
         {label}
       </dt>
-      <dd className="mt-0.5 text-sm text-text-primary">{value}</dd>
+      <dd className="mt-0.5 min-w-0 text-sm text-text-primary [overflow-wrap:anywhere]">{value}</dd>
     </div>
   );
 }
