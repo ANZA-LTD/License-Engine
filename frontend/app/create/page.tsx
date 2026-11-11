@@ -35,12 +35,12 @@ export const metadata: Metadata = {
  * video cards. `useSearchParams` requires a Suspense boundary during static
  * rendering, so the form is wrapped here rather than inside the form itself.
  */
-export default function CreateOfferPage({
+export default async function CreateOfferPage({
   searchParams,
 }: {
-  searchParams?: { videoId?: string };
+  searchParams?: Promise<{ videoId?: string }>;
 }) {
-  const videoId = searchParams?.videoId ?? "";
+  const videoId = (await searchParams)?.videoId ?? "";
 
   if (!canCreateOfferFromUploadedVideo(videoId)) {
     return (

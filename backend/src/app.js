@@ -83,7 +83,35 @@ function serveApiDocs(request, response, url, docsAuth) {
   return true;
 }
 
-export function createApp({ service, contentService = null, verifyEvent, origin, corsOrigins = [], readinessCheck, docsAuth = null, s2sSecret = null, now = () => Math.floor(Date.now() / 1000), onError = console.error }) {
+/** Fixed-window limiter: `limits` are requests per minute per address and kind. */
+export function createRateLimiter({ limits = { read: 600, write: 120 }, nowMs = () => Date.now() } = {}) {
+  const windows = new Map();
+  return {
+    allow(address, kind) {
+      const limit = limits[kind];
+      if (!limit) return true;
+      const key = `${kind}:${address}`;
+      const t = nowMs();
+      const entry = windows.get(key);
+      if (!entry || t - entry.start >= 60000) {
+        if (windows.size > 20000) windows.clear();
+        windows.set(key, { start: t, count: 1 });
+        return true;
+      }
+      entry.count += 1;
+      return entry.count <= limit;
+    }
+  };
+}
+
+// Cloud Run appends the caller to X-Forwarded-For; earlier entries can be client-supplied.
+function clientAddress(request) {
+  const forwarded = String(request.headers['x-forwarded-for'] ?? '').split(',').pop().trim();
+  return forwarded || request.socket?.remoteAddress || 'unknown';
+}
+
+export function createApp({ service, contentService = null, verifyEvent, origin, corsOrigins = [], readinessCheck, docsAuth = null, s2sSecret = null, rateLimits, now = () => Math.floor(Date.now() / 1000), onError = console.error }) {
+  const limiter = createRateLimiter(rateLimits ? { limits: rateLimits } : undefined);
   const controller = createOfferController(service);
   const contentController = createContentController(contentService || new Proxy({}, { get: () => () => {
     throw new HttpError(501, 'CONTENT_NOT_CONFIGURED', 'The content layer is not available.');
@@ -142,6 +170,11 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
         || matchRateRoute(request.method, url.pathname)
         || matchVideoRoute(request.method, url.pathname);
       if (!route) throw new HttpError(404, 'NOT_FOUND', 'Endpoint not found.');
+      // Per-address limits (per instance). Service-to-service calls are authenticated separately and exempt.
+      if (!route.s2s && !limiter.allow(clientAddress(request), request.method === 'GET' ? 'read' : 'write')) {
+        response.setHeader('Retry-After', '60');
+        throw new HttpError(429, 'RATE_LIMITED', 'Too many requests. Please wait a minute and try again.');
+      }
       const chunks = [];
       let bytes = 0;
       for await (const chunk of request) {

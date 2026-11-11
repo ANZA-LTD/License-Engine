@@ -7,6 +7,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useParams } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { Navbar } from "@/components/layout/Navbar";
 import { Card } from "@/components/ui/Card";
@@ -37,11 +38,9 @@ const POLL_INTERVAL_MS = Number(
  * replace the `setInterval` block below with a subscription; everything
  * else on this page stays the same.
  */
-export default function PaymentPage({
-  params,
-}: {
-  params: { offerId: string };
-}) {
+export default function PaymentPage() {
+  // Route parameters via the hook (Next 15 passes page params asynchronously).
+  const params = useParams<{ offerId: string }>();
   const [offer, setOffer] = useState<Offer | null>(null);
   const [payment, setPayment] = useState<PaymentRequestResponse | null>(null);
   const [confirmed, setConfirmed] = useState(false);

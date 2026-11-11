@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle, ExternalLink, Calendar, Download } from "lucide-react";
 import { Navbar } from "@/components/layout/Navbar";
@@ -26,7 +27,9 @@ import { formatPrice } from "@/lib/price";
  *   - status OPEN / PAYMENT_PENDING -> public offer view with Purchase CTA
  *   - status LICENSED               -> licensed confirmation view
  */
-export default function OfferPage({ params }: { params: { offerId: string } }) {
+export default function OfferPage() {
+  // Route parameters via the hook (Next 15 passes page params asynchronously).
+  const params = useParams<{ offerId: string }>();
   const [offer, setOffer] = useState<Offer | null>(null);
   const [error, setError] = useState<string | null>(null);
 
