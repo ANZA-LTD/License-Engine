@@ -20,6 +20,10 @@ jobs:
       - run: gcloud auth configure-docker africa-south1-docker.pkg.dev --quiet
       - run: docker build -t africa-south1-docker.pkg.dev/anza-staging/backend/api:${{ github.sha }} ./backend
       - run: docker push africa-south1-docker.pkg.dev/anza-staging/backend/api:${{ github.sha }}
+      # Apply database migrations with the new image before the API that needs them goes live.
+      - run: |
+          gcloud run jobs update migrate --image africa-south1-docker.pkg.dev/anza-staging/backend/api:${{ github.sha }} --region africa-south1 --quiet
+          gcloud run jobs execute migrate --region africa-south1 --wait
       - run: gcloud run deploy anza-staging --image africa-south1-docker.pkg.dev/anza-staging/backend/api:${{ github.sha }} --region africa-south1 --platform managed --allow-unauthenticated --add-cloudsql-instances anza-staging:africa-south1:anza-staging-db
       - run: |
           docker build -t africa-south1-docker.pkg.dev/anza-staging/cloud-run-source-deploy/licence-engine-frontend:${{ github.sha }} \
