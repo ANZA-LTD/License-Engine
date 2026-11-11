@@ -27,7 +27,7 @@ Creators also spend too much time waiting to be discovered. ANZA gives them a wa
 
 ANZA turns a creator's offer into a shareable, signed record:
 
-1. A creator enters the content reference, target brand, price in sats, rights, and duration.
+1. A creator uploads a video, then enters the target brand, price (in sats, or in a local currency such as KES with a live sats equivalent), rights, and duration.
 2. The creator signs the offer in their browser with a NIP-07 Nostr signer, or with an optional signer provider plugged in by the operator.
 3. ANZA verifies the signature, stores workflow state in PostgreSQL, and publishes the signed offer to configured Nostr relays.
 4. The creator shares the public offer link with a brand.
@@ -62,7 +62,9 @@ flowchart LR
 
 | Capability | Status | What it does |
 | --- | :---: | --- |
-| Creator offer form | ✅ | Captures title, description, public content URL, brand, sats price, rights, and duration. |
+| Creator offer form | ✅ | Captures title, description, the uploaded video, brand, price (sats or a fiat currency such as KES, shown with a live sats estimate), rights, and duration. |
+| Video upload | ✅ | Direct browser-to-Cloudinary upload with server-signed parameters; large files are sent in chunks. Brands see a watermarked preview only. |
+| Protected original download | ✅ | After a license, the buyer gets short-lived, limited-use download grants. Files arrive as downloads (on iPhone, a share-sheet "Save video"), and a buyer can return on another device with their download code. |
 | Browser-based Nostr signing | ✅ | NIP-07 browser signers, or an optional signer provider (`NEXT_PUBLIC_SIGNER_PROVIDER_URL`) exposing the same calls. Private keys stay out of the engine. |
 | Signed API authentication | ✅ | Binds authenticated creator requests to method, URL, body, and idempotency key. |
 | Nostr offer publication | ✅ | Verifies an offer event, queues it durably, and retries relay publication until acknowledged. |
@@ -73,6 +75,8 @@ flowchart LR
 | Zap receipt validation | ⚠️ | A valid kind 9735 receipt from the receiver key advertised by LNURL is treated as the creator service's signed attestation, not independent proof that funds moved. |
 | Payment QR and status UI | ✅ | Shows the price, Lightning QR/invoice, pending state, and confirmed payment state. |
 | Signed Nostr license event after payment | ⚠️ | A receipt accepted by the configured trust policy can trigger one linked license event through the existing outbox. This policy and provider compatibility still require real-endpoint staging validation. |
+| Optional checkout provider | ✅ | An operator can add other payment methods through a checkout provider script (`NEXT_PUBLIC_CHECKOUT_PROVIDER_URL`). Its payment service reports settled payments to the engine service-to-service, and the engine signs the license. |
+| Optional signer provider | ✅ | An operator can add a signer (`NEXT_PUBLIC_SIGNER_PROVIDER_URL`) exposing NIP-07-style calls and its own sign-in UI. Without it, Studio uses NIP-07 extensions. |
 
 ## Why this matters
 
@@ -126,7 +130,7 @@ The NIP-57 kind 9734 request, BOLT11 invoice, actual Lightning settlement, and k
 
 The creator-signed offer binds the entered Lightning Address, but that signature alone does not prove who controls the receiving wallet. The manually approved endpoint test must confirm that the intended creator receives the payment.
 
-## Architecture
+## Core Lightning flow
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -157,7 +161,7 @@ LND/regtest adapter; it cannot send real mainnet payments.
 
 | Layer | Technology | Role |
 | --- | --- | --- |
-| Frontend | Next.js 14, React 18, TypeScript | Creator flow, public offers, payment interface |
+| Frontend | Next.js 15, React 18, TypeScript | Creator flow, public offers, payment interface |
 | UI | Tailwind CSS, Lucide, `qrcode.react` | Responsive screens, icons, Lightning QR code |
 | Backend | Node.js 22, native HTTP modules | Validation, API, workflow coordination |
 | Database | PostgreSQL 17 via Docker Compose | Offers, idempotency records, relay outbox |
@@ -175,6 +179,13 @@ LND/regtest adapter; it cannot send real mainnet payments.
 | `POST` | `/api/offers/:offerId/payment` | Start an idempotent purchase and create/reuse its invoice; include the purchase capability headers. |
 | `GET` | `/api/purchases/:purchaseId/status` | Use `X-Purchase-Token` to poll the purchase-specific Zap receipt and license state. |
 | `GET` | `/api/offers/:offerId/status` | Local Polar/regtest legacy payment status only. |
+| `POST` | `/api/videos/upload-authorization` · `/api/videos` | Sign one direct Cloudinary upload, then register the uploaded video (creator). |
+| `POST` | `/api/purchases/:id/download-grant` | Issue a short-lived download grant to the buyer: a Lightning purchase id with `X-Purchase-Token`, or an offer id with `X-External-Credential`. |
+| `GET` | `/api/downloads/:grantToken` | Exchange a grant for a signed download link to the original. |
+| `GET` | `/api/rates/:currency` | Public BTC rate for a fiat currency (sats estimates). |
+| `POST` | `/api/offers/:offerId/external-payment-attestation` | Service-to-service: an external payment service reports a settled payment; the engine signs the license. |
+
+Requests are rate limited per address (reads and writes separately); service-to-service calls are exempt and authenticated with `LE_ATTESTATION_SECRET`.
 
 Full backend contracts live in [`backend/docs/openapi.json`](backend/docs/openapi.json) and [`backend/docs/api-contract.md`](backend/docs/api-contract.md).
 
@@ -221,6 +232,8 @@ cp frontend/.env.example frontend/.env
 
 Set `NEXT_PUBLIC_NOSTR_ATTESTOR_PUBKEY` to the same **public** attestor key configured for the backend. Never put a Nostr private key or LND macaroon in the frontend environment.
 
+Optional operator settings (all empty by default): `NEXT_PUBLIC_CHECKOUT_PROVIDER_URL` and `NEXT_PUBLIC_SIGNER_PROVIDER_URL` (provider scripts, see `frontend/lib/checkout.ts` and `frontend/lib/signerProvider.ts`), `NEXT_PUBLIC_SIGNUP_URL` and `NEXT_PUBLIC_ONBOARD_URL` (links shown to creators), and `NEXT_PUBLIC_SITE_URL`.
+
 ### 4. Install and run
 
 In separate terminals:
@@ -253,7 +266,7 @@ ANZA/
 ├── frontend/                 # Next.js creator and brand experience
 │   ├── app/                  # Create offer, public offer, and payment pages
 │   ├── components/           # UI, offer, layout, and payment components
-│   └── lib/                  # API client, Nostr signer, and shared types
+│   └── lib/                  # API client, Nostr signing, provider interfaces (checkout, signer), shared types
 ├── backend/                  # Node.js API and business rules
 │   ├── src/
 │   │   ├── services/nostr/   # Event builders and relay publisher
@@ -263,9 +276,25 @@ ANZA/
 │   │   └── database/         # SQL migrations
 │   ├── test/                 # Unit and integration coverage
 │   └── docs/                 # API, data model, and protocol notes
+├── .github/workflows/        # Deploys: staging branch -> staging, production branch -> production
 ├── compose.yaml              # Local PostgreSQL service
 └── README.md                 # Project overview
 ```
+
+## Deployment
+
+GitHub Actions deploy the `staging` branch to staging and the `production` branch
+to production on Google Cloud Run. Each deploy builds the backend and frontend
+images, runs the database migrations as a job **before** the new API goes live,
+then deploys. Production authenticates to Google Cloud through OIDC limited to the
+`production` branch, and every secret (database URL, attestor key, Cloudinary and
+service-to-service secrets) comes from the platform's secret manager, never from
+the repository or plain environment settings.
+
+Production startup refuses unsafe settings: it requires mainnet, public `wss://`
+relays, an HTTPS `PUBLIC_ORIGIN`, an unlocked attestor key, a service-to-service
+secret of at least 16 characters, and a username and password for the API docs
+(`SWAGGER_UI_USERNAME` / `SWAGGER_UI_PASSWORD`).
 DEV VS PRODUCTION NOTES
 strfry.conf + the strfry service in compose.yaml are local development only. Production points NOSTR_RELAYS at third-party wss:// relays.
 
@@ -276,10 +305,12 @@ strfry.conf + the strfry service in compose.yaml are local development only. Pro
 - **Terms are validated before storage or publication.** Invalid prices, missing fields, contradictory durations, and unsafe content URLs are rejected.
 - **Offer publication is durable.** A PostgreSQL outbox retries relays and does not report success until a relay acknowledges the exact event ID.
 - **Payment status comes from LND.** The UI does not mark an invoice paid merely because a buyer clicked a button.
+- **Download secrets are never stored in plain form.** Buyer credentials and download grants are stored as SHA-256 hashes; grants expire after an hour and allow a limited number of uses.
+- **Abuse protection.** Per-address rate limits on the API; pages are served with security headers (no framing, `nosniff`, HSTS, strict referrer policy).
 
 ## Roadmap
 
-- [ ] Add protected original-file delivery with one-time download access.
+- [x] Add protected original-file delivery with limited-use download access.
 - [ ] Support public testnet/mainnet Lightning with production-grade TLS, wallet permissions, and operational controls.
 - [ ] Add buyer acceptance and brand identity workflows.
 - [ ] Add creator offer history and license management.
