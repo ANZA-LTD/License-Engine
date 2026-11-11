@@ -13,7 +13,7 @@ import { LicenseDetails } from "@/components/offer/LicenseDetails";
 import { getMyOffer, getOffer, issueDownloadGrant, issueExternalDownloadGrant, consumeDownloadGrant, getStoredPurchaseId, getStoredDownloadGrant } from "@/lib/api";
 import { Offer } from "@/lib/types";
 import { PurchaseOptions } from "@/components/payment/PurchaseOptions";
-import { getStoredExternalCredential } from "@/lib/checkout";
+import { getStoredExternalCredential, storeExternalCredential } from "@/lib/checkout";
 import { formatPrice } from "@/lib/price";
 
 /**
@@ -216,119 +216,167 @@ function PaymentConfirmedView({ offer }: { offer: Offer }) {
   );
 }
 
+/**
+ * The download code a buyer receives with the purchase is the credential: a
+ * 64-character secret only the buyer holds. Spaces and dashes are ignored so
+ * a code copied in groups still works.
+ */
+function normaliseDownloadCode(input: string): string | null {
+  const code = input.replace(/[\s-]/g, "").toLowerCase();
+  return /^[0-9a-f]{64}$/.test(code) ? code : null;
+}
+
+/** iPhone/iPad: Safari can't save a video to Photos from a link, but the share sheet can ("Save Video"). */
+function prefersShareSheet(): boolean {
+  if (typeof navigator === "undefined" || typeof navigator.canShare !== "function") return false;
+  const ua = navigator.userAgent;
+  return /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+function toDate(value: string | number | undefined): Date | null {
+  if (value === undefined || value === null || value === "") return null;
+  const n = typeof value === "number" ? value : /^\d+$/.test(value) ? Number(value) : NaN;
+  // The license time is recorded in seconds; JavaScript dates use milliseconds.
+  const date = Number.isFinite(n) ? new Date(n < 1e12 ? n * 1000 : n) : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 /** Screen 5 — spec section 18/19 */
 function LicensedView({ offer }: { offer: Offer }) {
-  const [downloadStatus, setDownloadStatus] = useState<"idle" | "downloading" | "success" | "error">("idle");
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [manualPurchaseId, setManualPurchaseId] = useState<string>("");
-  const [showManualInput, setShowManualInput] = useState(false);
+  type Phase = "idle" | "preparing" | "ready" | "error";
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [prepared, setPrepared] = useState<{ url: string; file: File | null } | null>(null);
+  const [credential, setCredential] = useState<string | null>(null);
+  const [initialGrant, setInitialGrant] = useState<string | null>(null);
+  const [hasLightningAccess, setHasLightningAccess] = useState(false);
+  const [codeInput, setCodeInput] = useState("");
+  const [loaded, setLoaded] = useState(false);
   const autoAttempted = useRef(false);
-  // The buyer proves the purchase with a secret held by this browser: a fresh
-  // grant, an external-checkout credential, or the Lightning purchase token.
-  const [hasDownloadAccess, setHasDownloadAccess] = useState(false);
+
+  // The buyer proves the purchase with a secret: the download code (from the
+  // checkout on this device, or from a ?code=... link the provider sent), a
+  // fresh grant from the checkout redirect, or a Lightning purchase token.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search.slice(1));
-    setHasDownloadAccess(Boolean(
-      /^[0-9a-f]{64}$/.test(params.get("grantToken") ?? "") || getStoredDownloadGrant(offer.offerId)
-      || getStoredExternalCredential(offer.offerId) || offer.purchaseId || getStoredPurchaseId(offer.offerId)
-    ));
+    const params = new URLSearchParams(window.location.search);
+    const fromLink = normaliseDownloadCode(params.get("code") ?? "");
+    if (fromLink) {
+      storeExternalCredential(offer.offerId, fromLink);
+      params.delete("code");
+      const rest = params.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
+    }
+    setCredential(getStoredExternalCredential(offer.offerId));
+    const grant = params.get("grantToken");
+    setInitialGrant(grant && /^[0-9a-f]{64}$/.test(grant) ? grant : getStoredDownloadGrant(offer.offerId)?.grantToken ?? null);
+    setHasLightningAccess(Boolean(offer.purchaseId || getStoredPurchaseId(offer.offerId)));
+    setLoaded(true);
   }, [offer.offerId, offer.purchaseId]);
-  const licensedDate = offer.licensedAt
-    ? new Date(offer.licensedAt).toLocaleDateString("en-US", {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      })
+
+  const hasDownloadAccess = Boolean(credential || initialGrant || hasLightningAccess);
+  const licensedAt = toDate(offer.licensedAt);
+  const licensedDate = licensedAt
+    ? licensedAt.toLocaleDateString("en-US", { day: "numeric", month: "long", year: "numeric" })
     : "—";
 
-  const triggerFileDownload = async (grantToken: string): Promise<void> => {
-    const result = await consumeDownloadGrant(grantToken);
-    const link = document.createElement("a");
-    link.href = result.url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  // Each download uses a fresh short-lived grant, so tapping Download again
+  // never runs into an used-up or expired one.
+  const freshGrant = async (code: string | null): Promise<string> => {
+    if (code) return (await issueExternalDownloadGrant(offer.offerId, code)).grantToken;
+    if (initialGrant) return initialGrant;
+    const purchaseId = offer.purchaseId || getStoredPurchaseId(offer.offerId);
+    if (purchaseId) return (await issueDownloadGrant(purchaseId, offer.offerId)).grantToken;
+    throw new Error("Enter the download code you received with your purchase to download.");
   };
 
-  // Resolve the download grant token in priority order:
-  //   1. Query parameter (set by the pay page polling flow)
-  //   2. sessionStorage (persisted by the pay page polling flow)
-  //   3. issueDownloadGrant API call (legacy fallback)
-  const resolveGrantToken = async (): Promise<string | null> => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search.slice(1));
-      const queryToken = params.get("grantToken");
-      if (queryToken && /^[0-9a-f]{64}$/.test(queryToken)) return queryToken;
-    }
-    const stored = getStoredDownloadGrant(offer.offerId);
-    if (stored && /^[0-9a-f]{64}$/.test(stored.grantToken)) return stored.grantToken;
-    return null;
-  };
-
-  const initiateDownload = async (allowExpiryRetry: boolean, explicitPurchaseId?: string) => {
-    setDownloadStatus("downloading");
-    setDownloadError(null);
+  const prepareDownload = async (code: string | null = credential) => {
+    setPhase("preparing");
+    setError(null);
+    setPrepared(null);
     try {
-      // Prefer a pre-issued grant token from the polling flow.
-      const existingToken = await resolveGrantToken();
-      if (existingToken) {
-        await triggerFileDownload(existingToken);
-        setDownloadStatus("success");
-        return;
+      let url: string;
+      try {
+        url = (await consumeDownloadGrant(await freshGrant(code))).url;
+      } catch (first) {
+        // A grant from the checkout redirect may be used up or expired; a
+        // stored code can always mint a new one.
+        if (!code || !/expired|not found|revoked/i.test(first instanceof Error ? first.message : "")) throw first;
+        url = (await consumeDownloadGrant((await issueExternalDownloadGrant(offer.offerId, code)).grantToken)).url;
       }
-      // A buyer who paid through an external checkout holds a reusable credential.
-      const externalCredential = getStoredExternalCredential(offer.offerId);
-      if (externalCredential) {
-        const grant = await issueExternalDownloadGrant(offer.offerId, externalCredential);
-        await triggerFileDownload(grant.grantToken);
-        setDownloadStatus("success");
-        return;
-      }
-      // Fall back to requesting a new grant from the backend.
-      const purchaseIdForDownload = explicitPurchaseId || manualPurchaseId || offer.purchaseId || getStoredPurchaseId(offer.offerId);
-      if (!purchaseIdForDownload) {
-        setDownloadError("Purchase details not available for download.");
-        setDownloadStatus("error");
-        return;
-      }
-      const grant = await issueDownloadGrant(purchaseIdForDownload, offer.offerId);
-      await triggerFileDownload(grant.grantToken);
-      setDownloadStatus("success");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Download failed";
-      const isExpiredOrMissing = /expired|not found|revoked/i.test(message);
-      if (allowExpiryRetry && isExpiredOrMissing) {
+
+      if (prefersShareSheet()) {
         try {
-          const purchaseIdForDownload = manualPurchaseId || offer.purchaseId || getStoredPurchaseId(offer.offerId);
-          if (!purchaseIdForDownload) {
-            setDownloadError("Purchase details not available for download.");
-            setDownloadStatus("error");
+          const response = await fetch(url);
+          if (!response.ok) throw new Error("fetch failed");
+          const blob = await response.blob();
+          const extension = (blob.type.split("/")[1] || "mp4").split(";")[0].replace("quicktime", "mov");
+          const name = `${(offer.title || "anza-video").replace(/[^A-Za-z0-9 _-]/g, "").trim().replace(/\s+/g, "_").slice(0, 60) || "anza-video"}.${extension}`;
+          const file = new File([blob], name, { type: blob.type || "video/mp4" });
+          if (navigator.canShare({ files: [file] })) {
+            setPrepared({ url, file });
+            setPhase("ready");
             return;
           }
-          const grant = await issueDownloadGrant(purchaseIdForDownload, offer.offerId);
-          await triggerFileDownload(grant.grantToken);
-          setDownloadStatus("success");
-          return;
-        } catch (retryError) {
-          setDownloadError(retryError instanceof Error ? retryError.message : "Download failed");
-          setDownloadStatus("error");
-          return;
+        } catch {
+          /* fall back to a regular download */
         }
       }
-      setDownloadError(message);
-      setDownloadStatus("error");
+
+      // Desktop and Android: the link is sent as an attachment, so it downloads.
+      const link = document.createElement("a");
+      link.href = url;
+      link.rel = "noopener";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setPrepared({ url, file: null });
+      setPhase("ready");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The download could not be prepared. Please try again.");
+      setPhase("error");
     }
   };
 
-  // Automatically start the download once the license is granted and this view mounts.
-  // A manual button below remains as a fallback if the browser blocks the automatic download.
+  const saveWithShareSheet = async () => {
+    if (!prepared?.file) return;
+    try {
+      // Must run straight from the tap: iOS only opens the share sheet for a user gesture.
+      await navigator.share({ files: [prepared.file], title: offer.title });
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") return; // closed the sheet
+      setError("The share menu couldn't open. Use \"Download file\" below instead.");
+    }
+  };
+
+  const unlockWithCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = normaliseDownloadCode(codeInput);
+    if (!code) {
+      setError("That doesn't look like a download code. It's the 64-character code you received with your purchase.");
+      return;
+    }
+    setPhase("preparing");
+    setError(null);
+    try {
+      await issueExternalDownloadGrant(offer.offerId, code); // checks the code against this offer
+    } catch {
+      setPhase("error");
+      setError("That code doesn't match this license. Check the code for this offer and try again.");
+      return;
+    }
+    storeExternalCredential(offer.offerId, code);
+    setCredential(code);
+    setCodeInput("");
+    await prepareDownload(code);
+  };
+
+  // Start preparing as soon as the buyer lands here with access.
   useEffect(() => {
-    if (autoAttempted.current) return;
+    if (!loaded || autoAttempted.current || !hasDownloadAccess) return;
     autoAttempted.current = true;
-    initiateDownload(true);
-  }, [offer.purchaseId, offer.offerId]);
+    void prepareDownload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, hasDownloadAccess]);
 
   return (
     <main>
@@ -355,26 +403,57 @@ function LicensedView({ offer }: { offer: Offer }) {
           </div>
 
           <div className="mt-6 border-t border-border pt-6">
-            <Button fullWidth onClick={() => initiateDownload(false)} disabled={downloadStatus === "downloading" || !hasDownloadAccess}>
-              <Download size={16} className="mr-2" />
-              {downloadStatus === "downloading" ? "Preparing download…"
-                : downloadStatus === "success" ? "Download complete"
-                : "Download Original (Unwatermarked)"}
-            </Button>
-            {downloadError && (
+            {hasDownloadAccess ? (
+              <>
+                {phase === "ready" && prepared?.file ? (
+                  <>
+                    <Button fullWidth onClick={saveWithShareSheet}>
+                      <Download size={16} className="mr-2" /> Save video
+                    </Button>
+                    <p className="mt-2 text-center text-xs text-text-secondary">
+                      Choose <strong>Save Video</strong> to add it to Photos, or <strong>Save to Files</strong>.
+                    </p>
+                  </>
+                ) : (
+                  <Button fullWidth onClick={() => void prepareDownload()} disabled={phase === "preparing"}>
+                    <Download size={16} className="mr-2" />
+                    {phase === "preparing" ? "Preparing your video…" : phase === "ready" ? "Download again" : "Download Original (Unwatermarked)"}
+                  </Button>
+                )}
+                {phase === "ready" && prepared && (
+                  <p className="mt-2 text-center text-xs text-text-secondary">
+                    {prepared.file ? "Prefer a file? " : "Your download should start automatically. If it didn't, "}
+                    <a href={prepared.url} className="font-medium text-brand underline" rel="noopener">
+                      {prepared.file ? "Download file" : "download it here"}
+                    </a>
+                    .
+                  </p>
+                )}
+              </>
+            ) : (
+              <form onSubmit={unlockWithCode} className="space-y-3">
+                <p className="text-sm font-semibold text-text-primary">Bought this license?</p>
+                <p className="text-xs text-text-secondary">
+                  Enter the download code you received with your purchase.
+                </p>
+                <input
+                  value={codeInput}
+                  onChange={(e) => setCodeInput(e.target.value)}
+                  placeholder="Download code"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className="w-full rounded-lg border border-border px-3 py-2.5 font-mono text-sm text-text-primary focus:border-brand focus:outline-none"
+                />
+                <Button type="submit" fullWidth disabled={phase === "preparing" || !codeInput.trim()}>
+                  <Download size={16} className="mr-2" />
+                  {phase === "preparing" ? "Checking…" : "Unlock download"}
+                </Button>
+              </form>
+            )}
+            {error && (
               <p className="mt-2 text-sm text-red-600" role="alert">
-                {downloadError}
-              </p>
-            )}
-            {downloadStatus === "success" && (
-              <p className="mt-2 text-xs text-text-secondary text-center">
-                Your download should start automatically. Use the button above to retry if it does not.
-              </p>
-            )}
-            {!hasDownloadAccess && downloadStatus !== "downloading" && (
-              <p className="mt-4 text-xs text-text-secondary">
-                The original file is available to the buyer. Open this page in the
-                browser you paid from to download it.
+                {error}
               </p>
             )}
           </div>

@@ -470,7 +470,7 @@ async consumeDownloadGrant(input) {
       const video = await store.getVideo(grant.video_id);
       if (!video || !cloudinary) throw new HttpError(503, 'MEDIA_UNAVAILABLE', 'Protected media is unavailable.');
       const expiresAt = Math.floor(new Date(grant.expires_at).getTime() / 1000);
-      const url = cloudinary.signedOriginalUrl({ publicId: video.public_id, format: video.format }, expiresAt);
+      const url = cloudinary.signedOriginalUrl({ publicId: video.public_id, format: video.format }, expiresAt, { filename: video.title });
       return { status: 200, body: { url, expiresAt } };
     },
     async lightningWebhook({ body, headers, rawBody, provider }) {

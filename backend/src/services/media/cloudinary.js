@@ -119,9 +119,16 @@ export function createCloudinary({ cloudName, apiKey, apiSecret, folder, waterma
         .update(`contentport.asset.v1\u0000${cloudName}\u0000${RESOURCE_TYPE}\u0000${publicId}\u0000${assetVersion}`)
         .digest('hex');
     },
-    signedOriginalUrl(media, expiresAt) {
+    // The licensed original. fl_attachment makes Cloudinary send
+    // Content-Disposition: attachment, so browsers save the file instead of
+    // playing it in a tab (on iPhone, Safari offers "Download").
+    signedOriginalUrl(media, expiresAt, { filename } = {}) {
+      const name = typeof filename === 'string'
+        ? filename.normalize('NFKD').replace(/[^A-Za-z0-9 _-]/g, '').trim().replace(/\s+/g, '_').slice(0, 60)
+        : '';
       return cloudinarySdk.url(media.publicId, {
         resource_type: RESOURCE_TYPE, type: 'authenticated', format: media.format,
+        flags: name ? `attachment:${name}` : 'attachment',
         sign_url: true, expires_at: expiresAt
       });
     }
