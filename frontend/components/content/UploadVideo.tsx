@@ -33,9 +33,50 @@ function uploadToCloudinary(
   file: File,
   onProgress: (percent: number) => void
 ): Promise<CloudinaryUploadResult> {
+  // Phone videos are often larger than the 100 MB Cloudinary accepts in a single
+  // request, and mobile connections drop. Larger files are sent in chunks
+  // (Cloudinary's chunked upload: same signed parameters, X-Unique-Upload-Id and
+  // Content-Range headers), and each chunk is retried on a network error.
+  const total = file.size;
+  if (total <= CHUNK_SIZE) {
+    return sendPart(params, file, null, (loaded) => onProgress(Math.round((loaded / Math.max(total, 1)) * 100)));
+  }
+  return (async () => {
+    const uploadId = crypto.randomUUID().replaceAll("-", "");
+    let result: CloudinaryUploadResult | null = null;
+    for (let start = 0; start < total; start += CHUNK_SIZE) {
+      const end = Math.min(start + CHUNK_SIZE, total);
+      const range = { uploadId, header: `bytes ${start}-${end - 1}/${total}` };
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          result = await sendPart(params, file.slice(start, end), range, (loaded) =>
+            onProgress(Math.min(99, Math.round(((start + loaded) / total) * 100))),
+          );
+          break;
+        } catch (error) {
+          if (!(error instanceof NetworkError) || attempt >= 3) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+        }
+      }
+    }
+    onProgress(100);
+    return result!;
+  })();
+}
+
+const CHUNK_SIZE = 20 * 1024 * 1024;
+
+class NetworkError extends Error {}
+
+function sendPart(
+  params: { cloud_name: string; api_key: string; folder: string; context: string; timestamp: number; signature: string; resource_type: string },
+  blob: Blob,
+  range: { uploadId: string; header: string } | null,
+  onLoaded: (bytes: number) => void,
+): Promise<CloudinaryUploadResult> {
   return new Promise((resolve, reject) => {
     const form = new FormData();
-    form.append("file", file);
+    form.append("file", blob, blob instanceof File ? blob.name : "video");
     form.append("api_key", params.api_key);
     form.append("timestamp", String(params.timestamp));
     form.append("signature", params.signature);
@@ -48,26 +89,43 @@ function uploadToCloudinary(
 
     const request = new XMLHttpRequest();
     request.open("POST", `https://api.cloudinary.com/v1_1/${params.cloud_name}/${params.resource_type}/upload`);
+    if (range) {
+      request.setRequestHeader("X-Unique-Upload-Id", range.uploadId);
+      request.setRequestHeader("Content-Range", range.header);
+    }
     request.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
+      if (event.lengthComputable) onLoaded(Math.round((event.loaded / event.total) * blob.size));
     };
-    request.onerror = () => reject(new Error("The upload to Cloudinary failed. Check your connection and try again."));
+    request.onerror = () => reject(new NetworkError("The upload to Cloudinary was interrupted. Check your connection and try again."));
     request.onload = () => {
       let payload: CloudinaryUploadResult & { error?: { message?: string } };
       try {
         payload = JSON.parse(request.responseText);
       } catch {
-        reject(new Error("Cloudinary returned an unreadable response."));
+        reject(new Error(`Cloudinary returned an unreadable response (HTTP ${request.status}).`));
         return;
       }
       if (request.status < 200 || request.status >= 300 || payload.error) {
-        reject(new Error(payload.error?.message ?? "Cloudinary rejected the upload."));
+        reject(new Error(friendlyCloudinaryError(payload.error?.message, request.status)));
         return;
       }
       resolve(payload);
     };
     request.send(form);
   });
+}
+
+function friendlyCloudinaryError(message: string | undefined, status: number): string {
+  const tooLarge = message ? /file size too large\.\s*got (\d+)\.\s*maximum is (\d+)/i.exec(message) : null;
+  if (tooLarge) {
+    const mb = (bytes: string) => `${Math.round(Number(bytes) / (1024 * 1024))} MB`;
+    return `This video is ${mb(tooLarge[1])}, but uploads are currently limited to ${mb(tooLarge[2])}. Try a shorter clip or a lower-resolution export.`;
+  }
+  if (message && /file size too large/i.test(message)) return "This video is larger than uploads currently allow. Try a shorter clip or a lower-resolution export.";
+  if (message && /unsupported video format/i.test(message)) {
+    return "Cloudinary couldn't read this video. Use an MP4, MOV or WebM file.";
+  }
+  return message ? `Cloudinary rejected the upload: ${message}` : `Cloudinary rejected the upload (HTTP ${status}).`;
 }
 
 export function UploadVideo({ onUploaded }: { onUploaded: (video: VideoRecord) => void }) {
