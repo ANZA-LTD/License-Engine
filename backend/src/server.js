@@ -6,6 +6,8 @@ import { PostgresContentStore } from './repositories/videos.js';
 import { createOfferService } from './services/offers/service.js';
 import { createContentService } from './services/content/service.js';
 import { createCloudinary } from './services/media/cloudinary.js';
+import { createMedia } from './services/media/index.js';
+import { createContentServiceClient } from './services/media/content-service.js';
 import { createRelayPublisher } from './services/nostr/publisher.js';
 import { createLndClient } from './services/payments/lnd-client.js';
 import { createZapPaymentProvider } from './services/payments/zap-provider.js';
@@ -29,8 +31,12 @@ const paymentProvider = config.paymentImplementation === 'polar-lnd'
 const zapPaymentProvider = config.paymentImplementation === 'lnurl-zap'
   ? createZapPaymentProvider({ network: config.paymentNetwork, relays: config.relays }) : null;
 const rateProvider = createBtcRateProvider({ url: config.btcRateUrl });
-const service = createOfferService({ store, verifyEvent, paymentProvider, zapPaymentProvider, rateProvider, ...config, cloudinary: createCloudinary(config.cloudinary) });
-const contentService = createContentService({ store, cloudinary: createCloudinary(config.cloudinary) });
+// One media layer for both services: Cloudinary, a content service, or both (per video).
+const cloudinary = createCloudinary(config.cloudinary);
+const media = createMedia({ cloudinary, provider: config.media.provider,
+  contentService: config.media.contentService ? createContentServiceClient(config.media.contentService) : null });
+const service = createOfferService({ store, verifyEvent, paymentProvider, zapPaymentProvider, rateProvider, ...config, cloudinary, media });
+const contentService = createContentService({ store, cloudinary, media });
 const publish = createRelayPublisher({ relays: config.relays });
 const server = createApp({ service, contentService, verifyEvent, origin: config.origin, corsOrigins: config.corsOrigins,
   readinessCheck: checkDatabaseReadiness, docsAuth: config.docsAuth, s2sSecret: config.s2sSecret });

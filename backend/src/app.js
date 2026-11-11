@@ -214,6 +214,8 @@ export function createApp({ service, contentService = null, verifyEvent, origin,
       }
       const result = await (route.scope === 'content' ? contentController : controller)[route.action]({
         id: route.id, pubkey, body, key, digest: sha256(rawBody),
+        // Only an allowed browser origin is passed on (uploads are bound to it).
+        origin: requestOrigin && corsOrigins.includes(requestOrigin) ? requestOrigin : null,
         purchaseToken: request.headers['x-purchase-token'],
         externalCredential: request.headers['x-external-credential'],
         grantToken: route.token

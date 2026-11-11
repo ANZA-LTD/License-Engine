@@ -18,6 +18,12 @@ export class PostgresContentStore extends PostgresOfferStore {
     return (await this.pool.query('SELECT document FROM videos WHERE id = $1 AND owner_public_key = $2',
       [id, ownerPublicKey])).rows[0]?.document;
   }
+  // Media state only (processing -> ready, links, verified hash). Ownership and
+  // id never change, and the owner is part of the WHERE clause.
+  async updateVideoDocument(video) {
+    return (await this.pool.query('UPDATE videos SET document = $3, updated_at = now() WHERE id = $1 AND owner_public_key = $2',
+      [video.id, video.owner_public_key, video])).rowCount;
+  }
   async listVideosByOwner(ownerPublicKey) {
     return (await this.pool.query(
       'SELECT document FROM videos WHERE owner_public_key = $1 ORDER BY created_at DESC, id DESC', [ownerPublicKey]

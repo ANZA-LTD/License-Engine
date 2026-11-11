@@ -7,14 +7,14 @@ import { HttpError } from '../../utils/errors.js';
 import { verifySpeedWebhook } from '../payments/speed.js';
 import { parseLightningAddress } from '../payments/lnurl.js';
 import { validateZapReceipt } from '../payments/zap.js';
-import { mediaRef, previewUrl, thumbnailUrl } from '../media/cloudinary.js';
+import { createMedia } from '../media/index.js';
 import { resolveOfferSats } from '../payments/rates.js';
 
 const DISCOVERY_LIMIT = 50;
 
 export function createOfferService({ store, verifyEvent, kind, attestorPubkey, attestorSecretKey = null,
   speedWebhookSecret, paymentProvider = null, zapPaymentProvider = null, paymentEnabled = true,
-  paymentNetwork = 'regtest', cloudinary = null, rateProvider = null, now = () => Math.floor(Date.now() / 1000) }) {
+  paymentNetwork = 'regtest', cloudinary = null, media = createMedia({ cloudinary }), rateProvider = null, now = () => Math.floor(Date.now() / 1000) }) {
   const input = (schema, body) => {
     try { validate(schema, body); } catch (error) { throw new HttpError(400, 'VALIDATION_ERROR', error.message); }
   };
@@ -215,10 +215,13 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
         // The content layer resolves the canonical reference. The browser never
         // supplies the media URL for a video-backed offer, so it cannot point
         // an offer at an asset it does not own or at someone else's content.
-        const video = await store.getOwnedVideo(videoId, pubkey);
+        let video = await store.getOwnedVideo(videoId, pubkey);
         if (!video) throw new HttpError(404, 'NOT_FOUND', 'Video not found.');
+        // A content-service video may have finished processing since it was last read.
+        const refreshed = await media.refresh(video, now());
+        if (refreshed) { await store.updateVideoDocument(refreshed); video = refreshed; }
         if (video.status !== 'ready') throw new HttpError(409, 'VIDEO_NOT_READY', 'This video is still processing and cannot be offered yet.');
-        terms = { ...rest, ...destination, content_url: previewUrl(mediaRef(video)), content_sha256: video.reference_sha256 };
+        terms = { ...rest, ...destination, content_url: media.offerContentUrl(video), content_sha256: video.reference_sha256 };
       } else {
         terms = { ...rest, ...destination };
         try {
@@ -240,21 +243,13 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
     // the projection carries a watermarked preview rather than the original.
     async discover() {
       const rows = await store.listDiscoverableOffers(DISCOVERY_LIMIT);
-      const watermarkFor = (video) => {
-        if (!video || !video.width || !video.height) return cloudinary?.watermarkLandscape ?? null;
-        return video.height > video.width
-          ? cloudinary?.watermarkPortrait ?? null
-          : cloudinary?.watermarkLandscape ?? null;
-      };
       return { status: 200, body: { offers: rows.map(({ offer, video }) => {
-        const media = video ? mediaRef(video) : null;
-        const watermark = media ? watermarkFor(video) : null;
         return {
           offer_id: offer.id, video_id: offer.video_id ?? null,
           title: offer.terms.title ?? null, description: offer.terms.description ?? null,
           creator_public_key: offer.creator_pubkey,
-          preview_url: media ? previewUrl(media, undefined, watermark) : offer.terms.content_url,
-          thumbnail_url: media ? thumbnailUrl(media, undefined, watermark) : null,
+          preview_url: video ? (media.previewUrl(video) ?? offer.terms.content_url) : offer.terms.content_url,
+          thumbnail_url: video ? media.thumbnailUrl(video) : null,
           duration_seconds: video?.duration_seconds ?? null,
           license_duration: offer.terms.duration, price_sats: offer.terms.amount_sats ?? null,
           price: offer.terms.price ?? null,
@@ -270,13 +265,10 @@ export function createOfferService({ store, verifyEvent, kind, attestorPubkey, a
       // Attach a watermarked preview (and thumbnail) when the offer references a
       // creator-owned video, mirroring the discover projection.
       let enriched = stored;
-      if (cloudinary && stored.video_id && !stored.preview_url) {
+      if (stored.video_id && !stored.preview_url) {
         const video = await store.getVideo(stored.video_id);
-        if (video) {
-          const media = mediaRef(video);
-          const watermark = (video.height > video.width) ? cloudinary.watermarkPortrait : cloudinary.watermarkLandscape;
-          enriched = { ...stored, preview_url: previewUrl(media, undefined, watermark), thumbnail_url: thumbnailUrl(media, undefined, watermark) };
-        }
+        const previewLink = video ? media.previewUrl(video) : null;
+        if (previewLink) enriched = { ...stored, preview_url: previewLink, thumbnail_url: media.thumbnailUrl(video) };
       }
       if (enriched.creator_pubkey !== pubkey && enriched.external_payment) {
         // The external payment reference is the payment service's record key.
@@ -468,9 +460,10 @@ async consumeDownloadGrant(input) {
       const grant = await store.consumeDownloadGrant(tokenHash, now());
       if (!grant) throw new HttpError(404, 'NOT_FOUND', 'Download grant not found or expired.');
       const video = await store.getVideo(grant.video_id);
-      if (!video || !cloudinary) throw new HttpError(503, 'MEDIA_UNAVAILABLE', 'Protected media is unavailable.');
+      if (!video) throw new HttpError(503, 'MEDIA_UNAVAILABLE', 'Protected media is unavailable.');
       const expiresAt = Math.floor(new Date(grant.expires_at).getTime() / 1000);
-      const url = cloudinary.signedOriginalUrl({ publicId: video.public_id, format: video.format }, expiresAt, { filename: video.title });
+      const url = await media.signedOriginalUrl(video, expiresAt, { filename: video.title });
+      if (!url) throw new HttpError(503, 'MEDIA_UNAVAILABLE', 'Protected media is unavailable.');
       return { status: 200, body: { url, expiresAt } };
     },
     async lightningWebhook({ body, headers, rawBody, provider }) {

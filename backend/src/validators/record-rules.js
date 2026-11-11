@@ -42,6 +42,12 @@ export function validateRecordRules(name, value) {
   }
   if (name === 'Video') {
     check(value.updated_at >= value.created_at, 'updated_at cannot precede created_at');
-    check(value.public_id.includes('/'), 'public_id must retain its ContentPort folder prefix');
+    // Cloudinary assets live under the configured folder; a content-service
+    // video stores its asset id (a UUID) instead.
+    if (value.media_provider === 'content-service') {
+      check(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value.public_id), 'content-service public_id must be the asset id');
+    } else {
+      check(value.public_id.includes('/'), 'public_id must retain its ContentPort folder prefix');
+    }
   }
 }

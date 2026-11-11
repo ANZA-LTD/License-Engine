@@ -166,6 +166,29 @@ export interface UploadAuthorization {
   allowed_formats: string[];
 }
 
+/**
+ * Upload authorisation from a content service: a resumable upload session
+ * (the GCS resumable protocol: chunked PUTs with Content-Range, resumable).
+ */
+export interface ResumableUploadAuthorization {
+  provider: "content-service";
+  upload_session_id: string;
+  asset_id: string;
+  upload: { protocol: "gcs-resumable"; url: string; chunk_bytes: number; max_bytes: number };
+}
+
+export type AnyUploadAuthorization = UploadAuthorization | ResumableUploadAuthorization;
+
+export const isResumableUpload = (auth: AnyUploadAuthorization): auth is ResumableUploadAuthorization =>
+  (auth as ResumableUploadAuthorization).provider === "content-service";
+
+/** Body of POST /api/videos for a content-service upload. */
+export interface AssetRegistrationInput {
+  title: string;
+  upload_session_id: string;
+  asset_id: string;
+}
+
 /** Metadata Cloudinary returns after a direct browser upload. */
 export interface CloudinaryUploadResult {
   public_id: string;

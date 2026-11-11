@@ -64,6 +64,27 @@ function readCloudinary(env) {
   return { cloudName, apiKey, apiSecret, folder, watermarkLandscape, watermarkPortrait };
 }
 
+// Where new uploads go. Cloudinary stays the default; MEDIA_PROVIDER=content-service
+// sends new uploads to an external content service (see
+// services/media/content-service.js for the contract). Existing videos keep
+// the provider they were uploaded with.
+function readMediaProvider(env, appEnv) {
+  const provider = env.MEDIA_PROVIDER?.trim() || 'cloudinary';
+  if (!['cloudinary', 'content-service'].includes(provider)) throw new Error('MEDIA_PROVIDER must be cloudinary or content-service');
+  if (provider !== 'content-service') return { provider, contentService: null };
+  const baseUrl = (env.CONTENT_SERVICE_URL?.trim() || '').replace(/\/$/, '');
+  let url;
+  try { url = new URL(baseUrl); } catch { throw new Error('CONTENT_SERVICE_URL must be a valid URL when MEDIA_PROVIDER=content-service'); }
+  const auth = env.CONTENT_SERVICE_AUTH?.trim() || (appEnv === 'development' ? 'hmac' : 'google');
+  if (!['google', 'hmac'].includes(auth)) throw new Error('CONTENT_SERVICE_AUTH must be google or hmac');
+  const hmacSecret = env.CONTENT_SERVICE_HMAC_SECRET || '';
+  if (auth === 'hmac' && hmacSecret.length < 32) throw new Error('CONTENT_SERVICE_HMAC_SECRET (32+ characters) is required when CONTENT_SERVICE_AUTH=hmac');
+  if (appEnv !== 'development' && (auth !== 'google' || url.protocol !== 'https:')) {
+    throw new Error(`${appEnv} requires CONTENT_SERVICE_AUTH=google and an HTTPS CONTENT_SERVICE_URL`);
+  }
+  return { provider, contentService: { baseUrl, auth, hmacSecret } };
+}
+
 function readCorsOrigins(env) {
   // Support multiple browser frontends while preserving the older singular name.
   const values = env.CORS_ORIGINS ?? env.CORS_ORIGIN ?? '';
@@ -160,5 +181,5 @@ export function readConfig(env = process.env) {
     appEnv, paymentNetwork, paymentEnabled, paymentImplementation: appEnv === 'development' ? 'polar-lnd' : 'lnurl-zap',
     kind, attestorPubkey, attestorSecretKey, relays,
     ...(appEnv === 'development' ? { lndRestUrl: readLndUrl(env.LND_REST_URL), lndMacaroon: env.LND_MACAROON?.trim() || null } : {}),
-    cloudinary: readCloudinary(env), docsAuth, s2sSecret, btcRateUrl: readRateUrl(env) };
+    cloudinary: readCloudinary(env), media: readMediaProvider(env, appEnv), docsAuth, s2sSecret, btcRateUrl: readRateUrl(env) };
 }

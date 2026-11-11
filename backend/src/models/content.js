@@ -52,6 +52,13 @@ const videoRecord = object({
   created_at: time,
   updated_at: time
 });
+// Optional, so records created before media providers existed stay valid.
+// A content-service video stores its asset id in public_id, its own
+// watermarked preview and thumbnail links, and (once ready) the SHA-256 of the
+// actual file as reference_sha256.
+videoRecord.properties.media_provider = { type: 'string', enum: ['cloudinary', 'content-service'] };
+videoRecord.properties.preview_url = https;
+videoRecord.properties.thumbnail_url = https;
 
 const offerSummary = object({
   offer_id: recordId,
@@ -122,6 +129,31 @@ export function buildContentSchemas() {
       timestamp: positive,
       signature: { type: 'string', pattern: '^[0-9a-f]{40}$' },
       allowed_formats: { type: 'array', minItems: 1, items: { type: 'string', pattern: '^[a-z0-9]{1,8}$' } }
+    }),
+    // Content-service uploads: the browser describes the file before uploading
+    // (the size is enforced by the storage session)...
+    ResumableUploadRequest: object({
+      filename: { ...text, maxLength: 200 },
+      content_type: { type: 'string', enum: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska', 'video/3gpp'] },
+      size_bytes: positive
+    }),
+    // ...receives a resumable upload session...
+    ResumableUploadAuthorization: object({
+      provider: { const: 'content-service' },
+      upload_session_id: { type: 'string', pattern: '^[A-Za-z0-9_-]{16,100}$' },
+      asset_id: { type: 'string', pattern: '^[0-9a-f-]{36}$' },
+      upload: object({
+        protocol: { const: 'gcs-resumable' },
+        url: { type: 'string', pattern: '^https?://[^\\s]+$', maxLength: 4096 },
+        chunk_bytes: positive,
+        max_bytes: positive
+      })
+    }),
+    // ...and registers the asset once the upload finished.
+    AssetRegistration: object({
+      title: { ...text, maxLength: 200 },
+      upload_session_id: { type: 'string', pattern: '^[A-Za-z0-9_-]{16,100}$' },
+      asset_id: { type: 'string', pattern: '^[0-9a-f-]{36}$' }
     }),
     // A creator's own video plus the authoritative offer relationship, so the
     // frontend never infers offer state from whether an id happens to be present.

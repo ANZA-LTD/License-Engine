@@ -7,7 +7,8 @@ import {
   OwnedVideo,
   PaymentRequestResponse,
   PurchaseStatusResponse,
-  UploadAuthorization,
+  AnyUploadAuthorization,
+  AssetRegistrationInput,
   VideoRegistrationInput,
   VideoRecord,
 } from "./types";
@@ -161,12 +162,18 @@ export async function publishOffer(offerId: string): Promise<CreateOfferResponse
 // ---------------------------------------------------------------------------
 
 /** Authorises one direct browser-to-Cloudinary upload. */
-export function authorizeUpload(): Promise<UploadAuthorization> {
-  return signedRequest<UploadAuthorization>("POST", "/videos/upload-authorization");
+/**
+ * Authorises one direct upload. The file description lets a content service
+ * open a size-capped upload session; Cloudinary ignores it.
+ */
+export function authorizeUpload(file: { name: string; type: string; size: number }): Promise<AnyUploadAuthorization> {
+  return signedRequest<AnyUploadAuthorization>("POST", "/videos/upload-authorization", {
+    filename: file.name.slice(0, 200) || "video", content_type: file.type, size_bytes: file.size,
+  });
 }
 
 /** Registers an asset the browser already uploaded, and returns the stored record. */
-export function registerVideo(input: VideoRegistrationInput): Promise<OwnedVideo> {
+export function registerVideo(input: VideoRegistrationInput | AssetRegistrationInput): Promise<OwnedVideo> {
   return signedRequest<OwnedVideo>("POST", "/videos", input);
 }
 
