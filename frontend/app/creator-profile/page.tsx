@@ -19,7 +19,10 @@ import { Navbar } from "@/components/layout/Navbar";
 import { UploadVideo } from "@/components/content/UploadVideo";
 import { formatDuration, listMyVideos, publishOffer } from "@/lib/api";
 import { OfferSummary, OwnedVideo, VideoRecord } from "@/lib/types";
-import { probeSigner, SignerProbe } from "@/lib/nostr";
+import { formatPrice } from "@/lib/price";
+import { probeSigner, subscribeSigner, SignerProbe } from "@/lib/nostr";
+import { SignInPanel } from "@/components/signer/SignInPanel";
+import { ONBOARD_URL } from "@/lib/site";
 
 type LibraryState = "loading" | "unauthenticated" | "ready" | "error";
 
@@ -77,11 +80,16 @@ export default function CreatorProfilePage() {
   }, []);
 
   useEffect(() => {
-    void probeSigner().then((result) => {
-      setSigner(result);
-      if (result.status === "connected") void refresh();
-    });
-  }, [refresh]);
+    void probeSigner().then(setSigner);
+    return subscribeSigner(setSigner);
+  }, []);
+
+  const signedInAs = signer?.status === "connected" ? signer.pubkey : null;
+  useEffect(() => {
+    if (signer === null) return;
+    if (signedInAs) void refresh();
+    else setState("unauthenticated");
+  }, [signer, signedInAs, refresh]);
 
   async function handleUploaded(_video: VideoRecord) {
     setShowUpload(false);
@@ -184,6 +192,17 @@ export default function CreatorProfilePage() {
                   </p>
                 </div>
 
+                {/* Shown when the operator configures an enrollment page (NEXT_PUBLIC_ONBOARD_URL). */}
+                {ONBOARD_URL && (
+                  <a
+                    href={ONBOARD_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-700"
+                  >
+                    Onboard
+                  </a>
+                )}
                 <button
                   type="button"
                   disabled={state !== "ready"}
@@ -208,11 +227,8 @@ export default function CreatorProfilePage() {
 
               {state === "unauthenticated" && (
                 <div className="mt-8 rounded-xl border border-amber-200 bg-amber-50 p-5">
-                  <p className="font-medium text-amber-800">A Nostr signer is required.</p>
-                  <p className="mt-1 text-sm text-amber-700">
-                    Your videos are private to your Nostr identity. Install and unlock Alby or
-                    Flamingo, then reload this page. Your key never reaches this app.
-                  </p>
+                  <p className="mb-3 font-medium text-amber-800">Sign in to see your videos.</p>
+                  <SignInPanel locked={signer?.status === "locked"} onRetry={() => void probeSigner().then(setSigner)} />
                 </div>
               )}
 
@@ -267,9 +283,13 @@ function VideoCard({
   return (
     <article className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
       <div className="relative">
-        <img
-          src={entry.thumbnail_url}
-          alt={video.title}
+        <video
+          src={entry.preview_url}
+          poster={entry.thumbnail_url}
+          muted
+          autoPlay
+          loop
+          playsInline
           className="h-44 w-full object-cover"
         />
         <span className="absolute bottom-3 right-3 rounded-md bg-slate-900/80 px-2 py-1 text-[11px] font-semibold text-white">
@@ -301,7 +321,7 @@ function VideoCard({
           </span>
           {state.kind !== "none" && (
             <span className="text-xs font-medium text-slate-500">
-              {state.offer.price_sats.toLocaleString()} sats
+              {formatPrice(state.offer.price, state.offer.price_sats)}
             </span>
           )}
         </div>

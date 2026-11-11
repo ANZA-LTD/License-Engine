@@ -6,6 +6,7 @@ import {
   OfferStatusResponse,
   OwnedVideo,
   PaymentRequestResponse,
+  PurchaseStatusResponse,
   UploadAuthorization,
   VideoRegistrationInput,
   VideoRecord,
@@ -26,13 +27,19 @@ type BackendOffer = {
   creator_pubkey: string;
   terms: {
     title?: string; description?: string; brand: string; content_url: string;
-    content_sha256: string; amount_sats: number; usage_rights: string;
+    content_sha256: string; amount_sats?: number; usage_rights: string;
+    price?: { currency: string; amount_minor: number };
+    lightning_address?: string;
     duration: LicenseDuration;
   };
-  status: "draft" | "publishing" | "published" | "licensed";
+  status: "draft" | "publishing" | "published" | "licensing" | "licensed";
   event_id: string | null;
+  license_event_id?: string;
+  licensed_at?: string | number;
   video_id?: string;
-  payment?: { status?: "pending" | "settled"; settled_at?: number };
+  preview_url?: string;
+  thumbnail_url?: string | null;
+  payment?: { status?: "pending" | "settled" | "attested"; settled_at?: number; purchase_id?: string; purchaseId?: string };
 };
 
 function idempotencyKey() { return crypto.randomUUID().replaceAll("-", ""); }
@@ -79,10 +86,15 @@ export const creatorHandle = (pubkey: string) =>
  * one the browser must supply both fields, and there is nothing else to fingerprint.
  */
 async function offerDraftFrom(payload: CreateOfferPayload) {
+  // Prices are entered in whole Kenyan shillings and signed in cents. A Lightning
+  // Address is only included when the creator wants to accept Bitcoin too.
+  const lightningAddress = payload.creatorLightningAddress.trim();
   const base = {
     title: payload.title.trim(), description: payload.description.trim(),
-    brand: payload.brandName.trim(), amount_sats: payload.priceSats,
+    brand: payload.brandName.trim(),
+    price: { currency: "KES", amount_minor: Math.round(payload.priceKes) * 100 },
     usage_rights: payload.licenseDescription.trim(), duration: licenseDuration(payload),
+    ...(lightningAddress ? { lightning_address: lightningAddress } : {}),
   };
   if (payload.videoId) return { ...base, video_id: payload.videoId };
   const content_url = payload.contentUrl.trim();
@@ -91,12 +103,22 @@ async function offerDraftFrom(payload: CreateOfferPayload) {
 function fromBackend(offer: BackendOffer): Offer {
   const type = licenseType(offer.terms.duration);
   return { offerId: offer.id, title: offer.terms.title || "Untitled Content", description: offer.terms.description || offer.terms.usage_rights,
-    contentUrl: offer.terms.content_url, brandName: offer.terms.brand, priceSats: offer.terms.amount_sats,
+    contentUrl: offer.terms.content_url, preview_url: offer.preview_url, thumbnail_url: offer.thumbnail_url, brandName: offer.terms.brand,
+    priceSats: offer.terms.amount_sats ?? null, price: offer.terms.price ?? null,
+    creatorLightningAddress: offer.terms.lightning_address,
     licenseType: type, licenseDescription: offer.terms.usage_rights,
-    status: offer.status === "licensed" ? "LICENSED" : offer.payment?.status === "settled" ? "PAYMENT_SETTLED" : offer.payment?.status === "pending" ? "PAYMENT_PENDING" : "OPEN",
+    // A license signed but still awaiting relay publication is already issued,
+    // so the buyer can download while "licensing" settles to "licensed".
+    status: offer.status === "licensed" || (offer.status === "licensing" && offer.license_event_id) ? "LICENSED"
+      : offer.payment?.status === "attested" ? "PAYMENT_ATTESTED"
+      : offer.payment?.status === "settled" ? "PAYMENT_SETTLED" : offer.payment?.status === "pending" ? "PAYMENT_PENDING" : "OPEN",
     nostrEventId: offer.event_id ?? "Pending relay acknowledgement",
     ...(offer.payment?.settled_at ? { paymentSettledAt: offer.payment.settled_at } : {}),
-    creatorHandle: creatorHandle(offer.creator_pubkey) };
+    ...(offer.licensed_at ? { licensedAt: offer.licensed_at } : {}),
+    ...(offer.license_event_id ? { licenseNostrEventId: offer.license_event_id } : {}),
+    ...(offer.payment?.purchase_id ? { purchaseId: offer.payment.purchase_id } : {}),
+    ...(offer.payment?.purchaseId ? { purchaseId: offer.payment.purchaseId } : {}),
+    creatorHandle: creatorHandle(offer.creator_pubkey), creatorPubkey: offer.creator_pubkey };
 }
 async function waitForPublication(offerId: string): Promise<BackendOffer> {
   for (let attempt = 0; attempt < 25; attempt += 1) {
@@ -181,14 +203,136 @@ export async function getOffer(offerId: string): Promise<Offer> {
 export function getMyOffer(offerId: string): Promise<Offer> {
   return signedRequest<BackendOffer>("GET", `/offers/${offerId}`).then(fromBackend);
 }
+function purchaseCredentials(offerId: string) {
+  const key = `anza:purchase:${offerId}`;
+  const previous = sessionStorage.getItem(key);
+  if (previous) {
+    const value = JSON.parse(previous) as { idempotencyKey: string; accessToken: string };
+    if (/^[0-9a-f]{32}$/.test(value.idempotencyKey) && /^[0-9a-f]{64}$/.test(value.accessToken)) return value;
+  }
+  const value = {
+    idempotencyKey: crypto.randomUUID().replaceAll("-", ""),
+    accessToken: `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", ""),
+  };
+  sessionStorage.setItem(key, JSON.stringify(value));
+  return value;
+}
+function purchaseMetadataKey(offerId: string) {
+  return `anza:purchase:meta:${offerId}`;
+}
+export function storePurchaseId(offerId: string, purchaseId: string) {
+  if (typeof window === "undefined") return;
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(purchaseId)) return;
+  try {
+    sessionStorage.setItem(purchaseMetadataKey(offerId), JSON.stringify({ purchaseId }));
+  } catch {
+    /* ignore */
+  }
+}
+export function getStoredPurchaseId(offerId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(purchaseMetadataKey(offerId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { purchaseId?: string };
+    if (parsed && typeof parsed.purchaseId === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(parsed.purchaseId)) {
+      return parsed.purchaseId;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+/**
+ * Persist a download grant token issued by the backend during license
+ * attestation. The token is consumed directly by the offer page without
+ * requiring a separate issueDownloadGrant round-trip.
+ */
+export function persistDownloadGrant(offerId: string, grantToken: string, expiresAt: number | null) {
+  if (typeof window === "undefined") return;
+  if (!/^[0-9a-f]{64}$/.test(grantToken)) return;
+  try {
+    sessionStorage.setItem(downloadGrantKey(offerId), JSON.stringify({ grantToken, expiresAt }));
+  } catch {
+    /* ignore */
+  }
+}
+export function getStoredDownloadGrant(offerId: string): { grantToken: string; expiresAt: number | null } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(downloadGrantKey(offerId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { grantToken?: string; expiresAt?: number | null };
+    if (parsed && typeof parsed.grantToken === "string" && /^[0-9a-f]{64}$/.test(parsed.grantToken)) {
+      return { grantToken: parsed.grantToken, expiresAt: parsed.expiresAt ?? null };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+function downloadGrantKey(offerId: string) {
+  return `anza:download-grant:${offerId}`;
+}
 export async function createPaymentRequest(offerId: string): Promise<PaymentRequestResponse> {
-  const response = await fetch(apiUrl(`/offers/${offerId}/payment`), { method: "POST", headers: { "Content-Type": "application/json" } });
+  const credentials = purchaseCredentials(offerId);
+  const response = await fetch(apiUrl(`/offers/${offerId}/payment`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": credentials.idempotencyKey,
+      "X-Purchase-Token": credentials.accessToken },
+    body: "{}",
+  });
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json() as Promise<PaymentRequestResponse>;
+}
+export async function getPurchaseStatus(purchaseId: string, offerId: string): Promise<PurchaseStatusResponse> {
+  const credentials = purchaseCredentials(offerId);
+  const response = await fetch(apiUrl(`/purchases/${purchaseId}/status`), {
+    headers: { "X-Purchase-Token": credentials.accessToken },
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json() as Promise<PurchaseStatusResponse>;
 }
 export async function getOfferStatus(offerId: string): Promise<OfferStatusResponse> {
   const response = await fetch(apiUrl(`/offers/${offerId}/status`));
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json() as Promise<OfferStatusResponse>;
 }
+
+export async function issueDownloadGrant(purchaseId: string, offerId: string): Promise<{ grantToken: string; expiresAt: number }> {
+  const credentials = purchaseCredentials(offerId);
+  const response = await fetch(apiUrl(`/purchases/${purchaseId}/download-grant`), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": credentials.idempotencyKey,
+      "X-Purchase-Token": credentials.accessToken,
+    },
+    body: "{}",
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+/** Download grant for a buyer who paid through an external checkout provider. */
+export async function issueExternalDownloadGrant(offerId: string, credential: string): Promise<{ grantToken: string; expiresAt: number }> {
+  const response = await fetch(apiUrl(`/purchases/${offerId}/download-grant`), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey(),
+      "X-External-Credential": credential,
+    },
+    body: "{}",
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export async function consumeDownloadGrant(grantToken: string): Promise<{ url: string; expiresAt: number }> {
+  const response = await fetch(apiUrl(`/downloads/${grantToken}`));
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
 export { LICENSE_TYPE_LABELS, LICENSE_TYPE_DESCRIPTIONS };

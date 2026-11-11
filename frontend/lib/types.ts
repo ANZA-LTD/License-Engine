@@ -10,7 +10,7 @@
 
 export type LicenseType = "30_DAY_SOCIAL" | "90_DAY_COMMERCIAL" | "PERPETUAL";
 
-export type OfferStatus = "OPEN" | "PAYMENT_PENDING" | "PAYMENT_SETTLED" | "LICENSED";
+export type OfferStatus = "OPEN" | "PAYMENT_PENDING" | "PAYMENT_ATTESTED" | "PAYMENT_SETTLED" | "LICENSED";
 
 /** Full offer record — response shape of GET /api/offers/:offerId */
 export interface Offer {
@@ -18,19 +18,28 @@ export interface Offer {
   title: string;
   description: string;
   contentUrl: string;
+  preview_url?: string;
+  thumbnail_url?: string | null;
   brandName: string;
-  priceSats: number;
+  /** Signed sats price (older offers). Null for fiat-priced offers. */
+  priceSats: number | null;
+  /** Signed fiat price, e.g. { currency: "KES", amount_minor: 400000 }. */
+  price: { currency: string; amount_minor: number } | null;
+  creatorLightningAddress?: string;
   licenseType: LicenseType;
   licenseDescription: string;
   status: OfferStatus;
   nostrEventId: string;
   creatorHandle: string;
+  creatorPubkey: string;
   /** Only present once status === "LICENSED" */
-  licensedAt?: string;
+  licensedAt?: string | number;
   /** Nostr event id of the license/payment confirmation event (kind: license_purchase) */
   licenseNostrEventId?: string;
   /** Unix timestamp from LND once the Lightning invoice settles. */
   paymentSettledAt?: number;
+  /** Present once status === "LICENSED" and a purchase was created. */
+  purchaseId?: string;
 }
 
 /** Body of POST /api/offers */
@@ -39,7 +48,10 @@ export interface CreateOfferPayload {
   description: string;
   contentUrl: string;
   brandName: string;
-  priceSats: number;
+  /** Price in whole Kenyan shillings. */
+  priceKes: number;
+  /** Optional: only needed to accept Bitcoin Lightning payments. */
+  creatorLightningAddress: string;
   licenseType: LicenseType;
   licenseDescription: string;
   /**
@@ -61,6 +73,7 @@ export interface CreateOfferResponse {
 /** Response of POST /api/offers/:offerId/payment */
 export interface PaymentRequestResponse {
   offerId: string;
+  purchaseId?: string;
   amountSats: number;
   paymentRequest: string; // the raw "lnbc..." Lightning invoice string
 }
@@ -72,6 +85,21 @@ export interface OfferStatusResponse {
   licenseNostrEventId?: string;
   licensedAt?: string;
   paymentSettledAt?: number;
+  purchaseId?: string;
+  downloadGrantToken?: string;
+  downloadGrantExpiresAt?: number;
+}
+
+export interface PurchaseStatusResponse {
+  purchaseId: string;
+  status: "PAYMENT_PENDING" | "PAYMENT_ATTESTED" | "LICENSED" | "EXPIRED";
+  receiptState: "awaiting_receipt" | "temporarily_unavailable" | "verified";
+  licenseNostrEventId?: string;
+  licensedAt?: number;
+  /** Raw 64-char hex download grant token issued atomically during license attestation */
+  downloadGrantToken?: string;
+  /** Unix timestamp when the download grant expires */
+  downloadGrantExpiresAt?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +138,8 @@ export interface VideoRecord {
 export interface OfferSummary {
   offer_id: string;
   status: "draft" | "publishing" | "published" | "licensing" | "licensed";
-  price_sats: number;
+  price_sats: number | null;
+  price: { currency: string; amount_minor: number } | null;
   created_at: number;
 }
 
@@ -182,7 +211,8 @@ export interface DiscoveryListing {
   thumbnail_url: string | null;
   duration_seconds: number | null;
   license_duration: { type: "fixed"; days: number } | { type: "perpetual" };
-  price_sats: number;
+  price_sats: number | null;
+  price: { currency: string; amount_minor: number } | null;
   status: "published" | "licensing";
   created_at: number;
 }

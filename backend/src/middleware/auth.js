@@ -3,6 +3,22 @@ import { validate } from '../validators/validation.js';
 import { HttpError } from '../utils/errors.js';
 export const sha256 = value => createHash('sha256').update(value).digest('hex');
 
+// Constant-time compare of a shared service-to-service secret. Used for the
+// external-payment attestation route, independent of Nostr authentication.
+export function authenticateServiceToService(authorization, expectedSecret) {
+  if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) return false;
+  const value = authorization.slice(7);
+  if (!value || value.length < 1) return false;
+  return timingSafeEqual(createHash('sha256').update(value).digest(), createHash('sha256').update(expectedSecret).digest());
+}
+
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) result |= a[i] ^ b[i];
+  return result === 0;
+}
+
 // Injected verifier is nostr-tools/pure.verifyEvent in the production server.
 export function authenticate({ authorization, method, url, rawBody, idempotencyKey, verifyEvent, now }) {
   try {

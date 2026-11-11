@@ -28,22 +28,24 @@ Creators also spend too much time waiting to be discovered. ANZA gives them a wa
 ANZA turns a creator's offer into a shareable, signed record:
 
 1. A creator enters the content reference, target brand, price in sats, rights, and duration.
-2. The creator signs the offer in their browser using a Nostr signer extension.
+2. The creator signs the offer in their browser with a NIP-07 Nostr signer, or with an optional signer provider plugged in by the operator.
 3. ANZA verifies the signature, stores workflow state in PostgreSQL, and publishes the signed offer to configured Nostr relays.
 4. The creator shares the public offer link with a brand.
-5. The brand receives a Lightning invoice for the exact offer amount and pays it directly to the Creator node.
-6. ANZA checks the Lightning invoice settlement and updates the public payment state.
+5. The brand starts an account-free purchase. For staging and production, ANZA resolves the Lightning Address fixed in the creator-signed offer, sends a NIP-57 Zap request, and returns an invoice from the creator's Lightning service.
+6. The creator receives payment directly through that service. ANZA looks up the matching NIP-57 receipt on relays and issues a license only after the receipt passes the configured verification policy.
 
 ```mermaid
 flowchart LR
     C[Creator] -->|Sets price & license terms| F[ANZA offer form]
-    F -->|NIP-07 signature| A[Node.js API]
+    F -->|Creator signature| A[Node.js API]
     A -->|Persist workflow state| P[(PostgreSQL)]
-    A -->|Signed event| N[Nostr relays]
+    A -->|Offer and Zap receipt events| N[Nostr relays]
     F -->|Share link| B[Brand]
-    B -->|Pay invoice| L[Lightning Creator node]
-    L -->|Settlement lookup| A
-    A -->|Payment received| O[Public offer status]
+    B -->|Pay invoice| L[Creator LNURL-pay service]
+    L -->|Creator receives funds| W[Creator Lightning wallet]
+    L -->|Signed kind 9735 receipt| N
+    N -->|Receipt lookup and validation| A
+    A -->|Purchase and license state| O[Buyer status]
 
     style C fill:#ede9fe,stroke:#7c3aed,color:#111827
     style F fill:#dbeafe,stroke:#2563eb,color:#111827
@@ -52,6 +54,7 @@ flowchart LR
     style N fill:#f3e8ff,stroke:#9333ea,color:#111827
     style B fill:#ffedd5,stroke:#ea580c,color:#111827
     style L fill:#fef3c7,stroke:#d97706,color:#111827
+    style W fill:#fef3c7,stroke:#d97706,color:#111827
     style O fill:#dcfce7,stroke:#16a34a,color:#111827
 ```
 
@@ -60,15 +63,16 @@ flowchart LR
 | Capability | Status | What it does |
 | --- | :---: | --- |
 | Creator offer form | ✅ | Captures title, description, public content URL, brand, sats price, rights, and duration. |
-| Browser-based Nostr signing | ✅ | Uses a NIP-07 browser signer so private keys stay out of ANZA. |
+| Browser-based Nostr signing | ✅ | NIP-07 browser signers, or an optional signer provider (`NEXT_PUBLIC_SIGNER_PROVIDER_URL`) exposing the same calls. Private keys stay out of the engine. |
 | Signed API authentication | ✅ | Binds authenticated creator requests to method, URL, body, and idempotency key. |
 | Nostr offer publication | ✅ | Verifies an offer event, queues it durably, and retries relay publication until acknowledged. |
 | Public offer link | ✅ | Lets a brand review the exact content reference, terms, price, and Nostr event ID. |
 | PostgreSQL workflow storage | ✅ | Stores offers, idempotent requests, and the Nostr outbox locally through Docker Compose. |
-| Lightning invoice | ✅ | Creates a BOLT11 invoice from the offer's exact sats amount through a local Polar LND Creator node. |
-| Lightning settlement detection | ✅ | Looks up the invoice at LND and updates the UI only after LND reports settlement. |
+| Local Lightning regression path | ✅ | Existing tests retain Polar/LND invoice creation and settlement lookup for local regtest development only. |
+| Creator Lightning Address flow | ⚠️ | LNURL-pay/NIP-57 integration is implemented, but staging/production remain payment-disabled until the separately approved manual 1-sat compatibility test. |
+| Zap receipt validation | ⚠️ | A valid kind 9735 receipt from the receiver key advertised by LNURL is treated as the creator service's signed attestation, not independent proof that funds moved. |
 | Payment QR and status UI | ✅ | Shows the price, Lightning QR/invoice, pending state, and confirmed payment state. |
-| Signed Nostr license event after payment | ✅ | After verified Lightning settlement, ANZA signs a linked license event, queues it for relay publication, and records the license after relay acknowledgement. |
+| Signed Nostr license event after payment | ⚠️ | A receipt accepted by the configured trust policy can trigger one linked license event through the existing outbox. This policy and provider compatibility still require real-endpoint staging validation. |
 
 ## Why this matters
 
@@ -112,29 +116,42 @@ The repository supports a safe, local Lightning demonstration with [Polar](https
 > [!WARNING]
 > Polar uses private **regtest** Bitcoin. `lnbcrt...` invoices are demo invoices and cannot be paid from a normal wallet or a public testnet wallet. No real funds move in this setup.
 
+### Staging and production payments
+
+Staging and production use Bitcoin mainnet and the creator Lightning Address bound into the signed offer; Polar is restricted to local development. Payment remains disabled unless explicitly enabled for the relevant environment, and startup rejects inconsistent environment/network settings.
+
+Any real Lightning Address compatibility test is manual, exactly **1 sat**, and requires separate explicit approval before payment for staging or production. Automated tests never send mainnet payments. Wallet of Satoshi is not assumed to support the full NIP-57 receipt flow, and creators are not asked to switch providers without evidence. Missing or delayed receipts remain pending and cannot issue a license. ANZA does not hold or forward creator funds.
+
+The NIP-57 kind 9734 request, BOLT11 invoice, actual Lightning settlement, and kind 9735 receipt are distinct. The accepted policy trusts the receiver key advertised by the creator's HTTPS LNURL-pay service. A receiver-signed receipt is that service's attestation, **not independent proof that funds moved**.
+
+The creator-signed offer binds the entered Lightning Address, but that signature alone does not prove who controls the receiving wallet. The manually approved endpoint test must confirm that the intended creator receives the payment.
+
 ## Architecture
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         Next.js frontend :3001                        │
-│  Create offer • NIP-07 signing • Public offer • QR payment screen    │
+│  Create offer • on-device signing • Public offer • QR payment screen│
 └──────────────────────────────┬───────────────────────────────────────┘
                                │ HTTP / JSON
 ┌──────────────────────────────▼───────────────────────────────────────┐
 │                          Node.js backend :3000                        │
-│  Auth • validation • offer API • Nostr outbox • LND invoice lookup   │
+│  Auth • offer API • purchase records • Nostr receipt verification    │
 └──────────────┬───────────────────────────────┬───────────────────────┘
                │                               │
       ┌────────▼────────┐             ┌────────▼─────────┐
       │ PostgreSQL :5432│             │ Nostr relays      │
-      │ Offers + outbox │             │ Signed offer event│
+      │ Offers + outbox │             │ Offers + receipts│
       └─────────────────┘             └──────────────────┘
                │
-      ┌────────▼─────────────────────────────────────────┐
-      │ Polar LND Creator node                             │
-      │ BOLT11 invoice creation + settlement verification  │
-      └───────────────────────────────────────────────────┘
+      ┌────────▼────────────────────┐    ┌────────────────────────┐
+      │ Creator LNURL-pay service   │───▶│ Creator Lightning wallet│
+      │ Mainnet invoice + Zap receipt│    │ Receives funds directly│
+      └─────────────────────────────┘    └────────────────────────┘
 ```
+
+Local development substitutes the creator service with the existing Polar
+LND/regtest adapter; it cannot send real mainnet payments.
 
 ### Technology stack
 
@@ -144,8 +161,8 @@ The repository supports a safe, local Lightning demonstration with [Polar](https
 | UI | Tailwind CSS, Lucide, `qrcode.react` | Responsive screens, icons, Lightning QR code |
 | Backend | Node.js 22, native HTTP modules | Validation, API, workflow coordination |
 | Database | PostgreSQL 17 via Docker Compose | Offers, idempotency records, relay outbox |
-| Nostr | `nostr-tools`, NIP-07 signer | Event signing and verification |
-| Payments | LND REST API through Polar | BOLT11 invoice creation and settlement lookup |
+| Nostr | `nostr-tools`, NIP-07 signer (or a pluggable signer provider) | Event signing and verification |
+| Payments | Polar/LND locally; LNURL-pay and NIP-57 on mainnet | Local regression plus direct creator payments and signed receipt verification |
 | Testing | Node test runner | Contract, validation, Nostr, LND, and persistence tests |
 
 ## API at a glance
@@ -155,8 +172,9 @@ The repository supports a safe, local Lightning demonstration with [Polar](https
 | `POST` | `/api/offers` | Create a signed creator-owned offer draft. |
 | `GET` | `/api/offers/:offerId` | Read a public published offer. |
 | `POST` | `/api/offers/:offerId/publish` | Validate and queue the signed Nostr offer event. |
-| `POST` | `/api/offers/:offerId/payment` | Create or reuse the offer's Lightning invoice. |
-| `GET` | `/api/offers/:offerId/status` | Check LND settlement and return offer/payment status. |
+| `POST` | `/api/offers/:offerId/payment` | Start an idempotent purchase and create/reuse its invoice; include the purchase capability headers. |
+| `GET` | `/api/purchases/:purchaseId/status` | Use `X-Purchase-Token` to poll the purchase-specific Zap receipt and license state. |
+| `GET` | `/api/offers/:offerId/status` | Local Polar/regtest legacy payment status only. |
 
 Full backend contracts live in [`backend/docs/openapi.json`](backend/docs/openapi.json) and [`backend/docs/api-contract.md`](backend/docs/api-contract.md).
 
@@ -166,7 +184,7 @@ Full backend contracts live in [`backend/docs/openapi.json`](backend/docs/openap
 
 - Node.js **22+**
 - Docker and Docker Compose
-- A Nostr NIP-07 signer extension, such as nos2x, for creating offers
+- A Nostr NIP-07 signer extension, such as nos2x, for creating offers (or a configured signer provider)
 - Polar with a Creator LND node for the Lightning demo
 
 ### 1. Start PostgreSQL
@@ -239,7 +257,7 @@ ANZA/
 ├── backend/                  # Node.js API and business rules
 │   ├── src/
 │   │   ├── services/nostr/   # Event builders and relay publisher
-│   │   ├── services/payments/# Polar LND client
+│   │   ├── services/payments/# Polar/LND and LNURL-pay/NIP-57 adapters
 │   │   ├── services/offers/  # Offer and payment workflow
 │   │   ├── repositories/     # PostgreSQL persistence
 │   │   └── database/         # SQL migrations
@@ -253,7 +271,7 @@ strfry.conf + the strfry service in compose.yaml are local development only. Pro
 
 ## Security and privacy principles
 
-- **Private keys stay in the signer.** The frontend requests NIP-07 signatures; it does not collect or transmit a creator's private key.
+- **Private keys stay in the signer.** The frontend requests NIP-07-style signatures from a browser extension or a configured signer provider; it does not collect or transmit a creator's private key, and the backend verifies every signature.
 - **Secrets stay local.** `.env` files, LND macaroons, database credentials, and tunnel tokens must never be committed.
 - **Terms are validated before storage or publication.** Invalid prices, missing fields, contradictory durations, and unsafe content URLs are rejected.
 - **Offer publication is durable.** A PostgreSQL outbox retries relays and does not report success until a relay acknowledges the exact event ID.
@@ -287,3 +305,62 @@ Please do not commit `.env` files, macaroons, private keys, access tokens, or ge
 Built for creators who should be able to say: **this is my work, these are my terms, and this is the record.**
 
 </div>
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph FE["License Engine frontend · frontend"]
+    CreatorScreens["Creator profile, upload content, create and publish offers"]
+    BrandScreens["Offer page, Lightning payment, license and download"]
+    LEApi["lib/api.ts · Nostr-signed API requests"]
+    CreatorScreens --> LEApi
+    BrandScreens --> LEApi
+  end
+
+  subgraph BE["License Engine backend · backend"]
+    OfferAPI["POST /api/offers · GET /api/offers/:id · POST /api/offers/:id/publish"]
+    VideoAPI["POST /api/videos/upload-authorization · POST /api/videos"]
+    ZapAPI["POST /api/offers/:id/payment · GET /api/purchases/:id/status"]
+    GrantAPI["download grants · GET /api/downloads/:token"]
+    ExternalAttest["POST /api/offers/:id/external-payment-attestation (service-to-service)"]
+    Store[("PostgreSQL · offers, purchases, grants, outbox")]
+  end
+
+  subgraph External["External services"]
+    Cloudinary["Cloudinary · direct browser upload and protected media"]
+    Nostr["Nostr signer and relays · signed offer, Zap receipt, license event"]
+    Lightning["Creator LNURL-pay / NIP-57 Zap; local Polar/LND in development"]
+  end
+
+  subgraph Optional["Optional, operator-supplied"]
+    Signer["Signer provider script · window.ContentPortSigner"]
+    Checkout["Checkout provider script · window.ContentPortCheckout"]
+    PaySvc["External payment service"]
+  end
+
+  LEApi --> OfferAPI
+  LEApi --> VideoAPI
+  LEApi --> ZapAPI
+  LEApi --> GrantAPI
+  LEApi --> Nostr
+  LEApi -->|"signed upload parameters, then direct browser upload"| Cloudinary
+  OfferAPI --> Store
+  ZapAPI --> Store
+  GrantAPI --> Store
+  ZapAPI --> Lightning
+  Lightning --> Nostr
+  Nostr -->|"verified receipt can trigger license"| ZapAPI
+  GrantAPI -->|"only after a valid purchase"| Cloudinary
+  CreatorScreens -.-> Signer
+  BrandScreens -.-> Checkout
+  Checkout -.-> PaySvc
+  PaySvc -.->|"settled payment"| ExternalAttest
+  ExternalAttest --> Store
+  ExternalAttest -->|"publish license event"| Nostr
+```
+
+The engine runs on its own with NIP-07 signing and Lightning payments. An
+operator can add a signer provider, a checkout provider and an external payment
+service through the documented interfaces (`frontend/lib/signerProvider.ts`,
+`frontend/lib/checkout.ts`, and the attestation endpoint); none are required.

@@ -13,8 +13,9 @@ export function Button({
   disabled,
   ...props
 }: ButtonProps) {
+  // PWA/mobile: Added min-height for touch targets (44px) and touch-manipulation for better mobile UX
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-lg px-5 py-3 text-sm font-semibold transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50";
+    "inline-flex items-center justify-center gap-2 rounded-lg px-5 py-3 text-sm font-semibold transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50 min-h-[44px] touch-manipulation";
   const variants = {
     primary: "bg-brand text-white hover:bg-brand-dark",
     secondary:
@@ -28,3 +29,4 @@ export function Button({
     />
   );
 }
+

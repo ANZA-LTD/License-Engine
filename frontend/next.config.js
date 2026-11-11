@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
   images: {
     // MVP content is hosted on Cloudinary (see spec section 22 — Content Hosting).
     // Add any other media hosts the backend team ends up using here.
